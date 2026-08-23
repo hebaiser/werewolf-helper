@@ -7,6 +7,7 @@
 // @match        https://www.werewolf.com.cn/room/*
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @license      GPL-3.0
 // @downloadURL  https://github.com/hebaiser/werewolf-helper/raw/refs/heads/main/werewolf-helper.user.js
 // @updateURL    https://github.com/hebaiser/werewolf-helper/raw/refs/heads/main/werewolf-helper.user.js
 // ==/UserScript==
