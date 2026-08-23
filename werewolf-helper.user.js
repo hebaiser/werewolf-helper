@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.0
-// @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格
+// @version      0.1.1
+// @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
 // @grant        GM_setValue
@@ -11,18 +11,6 @@
 // @downloadURL https://update.greasyfork.org/scripts/592666/%E6%9C%88%E4%B8%8B%E4%BA%BA%E7%8B%BC%20%E6%99%AE%E6%9D%91%E7%8B%BC%E5%8A%A9%E7%90%86.user.js
 // @updateURL https://update.greasyfork.org/scripts/592666/%E6%9C%88%E4%B8%8B%E4%BA%BA%E7%8B%BC%20%E6%99%AE%E6%9D%91%E7%8B%BC%E5%8A%A9%E7%90%86.meta.js
 // ==/UserScript==
-
-
-
-
-
-
-
-
-
-
-
-
 
 (function() {
     'use strict';
@@ -41,6 +29,75 @@
     // 1. 存储
     // ============================================================
 
+    const SETTINGS_KEY = 'werewolf_settings_v1';
+
+    const defaultSettings = {
+        theme: 'dark',
+        position: 'left',
+        width: 'medium',
+        baseFontSize: 11,
+        autoShrink: true,
+        shrinkThresholds: {
+            '11': 18,
+            '10': 22,
+            '9': 26,
+            '8': Infinity
+        },
+        shrinkMin: 8,
+        deathOpacity: 0.5,
+        colors: {
+            dark: {
+                bg: '#1e1e28',
+                text: '#e0e0e0',
+                textSecondary: '#8888aa',
+                border: '#4a4a6a',
+                divider: '#4a4a6a',
+                highlight: 'rgba(100,200,255,0.12)',
+                hover: 'rgba(100,200,255,0.06)',
+                mark: '#ffaa66',
+                view: '#66ddff'
+            },
+            light: {
+                bg: '#e8e8ee',
+                text: '#1a1a2e',
+                textSecondary: '#444466',
+                border: '#8888bb',
+                divider: '#8888bb',
+                highlight: 'rgba(50,100,200,0.20)',
+                hover: 'rgba(50,100,200,0.10)',
+                mark: '#cc8833',
+                view: '#2288bb'
+            }
+        },
+        jobColorPreset: 'classic',
+        jobColors: {},
+        perspective: null,
+        collapsed: false
+    };
+
+    function getSettings() {
+        const stored = GM_getValue(SETTINGS_KEY, null);
+        if (!stored) return JSON.parse(JSON.stringify(defaultSettings));
+        const merged = JSON.parse(JSON.stringify(defaultSettings));
+        for (const key in stored) {
+            if (stored.hasOwnProperty(key) && merged.hasOwnProperty(key)) {
+                if (typeof stored[key] === 'object' && stored[key] !== null && !Array.isArray(stored[key])) {
+                    merged[key] = { ...merged[key], ...stored[key] };
+                } else {
+                    merged[key] = stored[key];
+                }
+            }
+        }
+        if (merged.baseFontSize) {
+            merged.baseFontSize = Number(merged.baseFontSize) || 11;
+        }
+        return merged;
+    }
+
+    function saveSettings(settings) {
+        GM_setValue(SETTINGS_KEY, settings);
+    }
+
     const store = {
         get() {
             const all = GM_getValue('werewolf_notes_v29', {});
@@ -54,7 +111,6 @@
             all[ROOM_ID] = data;
             GM_setValue('werewolf_notes_v29', all);
         },
-
         getIdentity(perspectiveId, playerId) {
             const data = this.get();
             if (!data.identity[perspectiveId]) return null;
@@ -70,7 +126,6 @@
             }
             this.set(data);
         },
-
         getAction(operatorId) {
             const data = this.get();
             if (!data.action[operatorId]) return {};
@@ -91,7 +146,6 @@
             }
             this.set(data);
         },
-
         setJobColors(colors) {
             const data = this.get();
             data.jobColors = colors;
@@ -100,7 +154,6 @@
         getJobColors() {
             return this.get().jobColors || {};
         },
-
         clearAll() {
             const all = GM_getValue('werewolf_notes_v29', {});
             all[ROOM_ID] = { identity: {}, action: {}, jobColors: {} };
@@ -109,7 +162,7 @@
     };
 
     // ============================================================
-    // 2. 颜色
+    // 2. 颜色 - 深色/浅色两套职业预设
     // ============================================================
 
     function generateJobColors(jobList) {
@@ -121,64 +174,166 @@
         return colors;
     }
 
-    function getJobColor(job) {
+    const PRESET_JOB_COLORS = {
+        dark: {
+            classic: {
+                '村人': '#888888',
+                '占卜师': '#44ddff',
+                '灵能者': '#66ff99',
+                '人狼': '#ff4444',
+                '狂人': '#ff88bb',
+                '妖狐': '#dd77ff',
+                '猎人': '#ffaa44',
+                '共有者': '#ffdd44',
+                '面包店': '#66ddbb'
+            },
+            soft: {
+                '村人': '#999999',
+                '占卜师': '#77ddee',
+                '灵能者': '#88dd99',
+                '人狼': '#dd6666',
+                '狂人': '#dd99bb',
+                '妖狐': '#cc88dd',
+                '猎人': '#dd9944',
+                '共有者': '#ddcc55',
+                '面包店': '#66ccaa'
+            },
+            highcontrast: {
+                '村人': '#aaaaaa',
+                '占卜师': '#00ddff',
+                '灵能者': '#00ff66',
+                '人狼': '#ff0000',
+                '狂人': '#ff44aa',
+                '妖狐': '#dd44ff',
+                '猎人': '#ff8800',
+                '共有者': '#ffee00',
+                '面包店': '#00dd99'
+            },
+            colorblind: {
+                '村人': '#aaaaaa',
+                '占卜师': '#0088dd',
+                '灵能者': '#55bb77',
+                '人狼': '#dd4411',
+                '狂人': '#dd77aa',
+                '妖狐': '#9966dd',
+                '猎人': '#dd9900',
+                '共有者': '#55aa88',
+                '面包店': '#bbbb44'
+            }
+        },
+        light: {
+            classic: {
+                '村人': '#777777',
+                '占卜师': '#0088cc',
+                '灵能者': '#22aa66',
+                '人狼': '#cc2222',
+                '狂人': '#dd5599',
+                '妖狐': '#bb44dd',
+                '猎人': '#dd7700',
+                '共有者': '#ccaa00',
+                '面包店': '#22aa88'
+            },
+            soft: {
+                '村人': '#888888',
+                '占卜师': '#4488aa',
+                '灵能者': '#55aa77',
+                '人狼': '#aa5555',
+                '狂人': '#bb7799',
+                '妖狐': '#aa66bb',
+                '猎人': '#bb7733',
+                '共有者': '#bbaa44',
+                '面包店': '#44aa88'
+            },
+            highcontrast: {
+                '村人': '#999999',
+                '占卜师': '#0066cc',
+                '灵能者': '#00aa44',
+                '人狼': '#cc0000',
+                '狂人': '#dd3388',
+                '妖狐': '#bb22dd',
+                '猎人': '#cc6600',
+                '共有者': '#ccaa00',
+                '面包店': '#00aa77'
+            },
+            colorblind: {
+                '村人': '#888888',
+                '占卜师': '#0066bb',
+                '灵能者': '#338855',
+                '人狼': '#bb3300',
+                '狂人': '#bb5588',
+                '妖狐': '#7744bb',
+                '猎人': '#bb7700',
+                '共有者': '#338866',
+                '面包店': '#999933'
+            }
+        }
+    };
+
+    function getPresetJobColors(presetName, theme) {
+        const themeKey = theme === 'light' ? 'light' : 'dark';
+        const themePresets = PRESET_JOB_COLORS[themeKey] || PRESET_JOB_COLORS.dark;
+        return themePresets[presetName] || themePresets.classic;
+    }
+
+    function getJobColor(job, settings) {
         if (!job) return '#888';
-        return store.getJobColors()[job] || '#888';
+        const theme = settings.theme === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : settings.theme;
+        if (settings.jobColorPreset === 'custom') {
+            const userColors = settings.jobColors || {};
+            if (userColors[job]) return userColors[job];
+        }
+        const preset = getPresetJobColors(settings.jobColorPreset || 'classic', theme);
+        if (preset[job]) return preset[job];
+        const storeColors = store.getJobColors();
+        if (storeColors[job]) return storeColors[job];
+        return '#888';
     }
 
     // ============================================================
     // 3. 查找玩家
     // ============================================================
 
-    function findPlayers() {
-        const players = [];
-        const seen = new Set();
+function findPlayers() {
+    const players = [];
+    const seen = new Set();
 
-        const selectors = [
-            '.sc-jtRfpW',
-            '.player-card',
-            '[class*="player"]',
-            '.sc-fYxtnH a[href^="/user/"]',
-            '.log-entry a[href^="/user/"]',
-            '.sidebar a[href^="/user/"]',
-            '.players a[href^="/user/"]',
-            'a[href^="/user/"]'
-        ];
+    // 直接用最稳定的选择器：所有玩家链接
+    const links = document.querySelectorAll('a[href^="/user/"]');
 
-        for (const sel of selectors) {
-            const elements = document.querySelectorAll(sel);
-            for (const el of elements) {
-                let link = el;
-                if (el.tagName !== 'A') {
-                    link = el.querySelector('a[href^="/user/"]');
+    for (const link of links) {
+        const href = link.getAttribute('href');
+        const id = href.replace(/.*\/user\//, '').split('?')[0];
+        if (!id || seen.has(id)) continue;
+
+        const name = link.textContent.trim();
+        if (!name || name.includes('游戏管理员') || name === '游戏管理员') continue;
+
+        seen.add(id);
+
+        // 死亡检测：从link向上找.sc-gxMtzJ容器
+        let isDead = false;
+
+        // 替身君固定死亡
+        if (name === '替身君') {
+            isDead = true;
+        } else {
+            // 获取父容器 .sc-gxMtzJ
+            let container = link.closest('.sc-gxMtzJ');
+            if (container) {
+                // 检查容器内有没有死亡图标
+                if (container.querySelector('img[alt="死亡"]')) {
+                    isDead = true;
                 }
-                if (!link) continue;
-
-                const href = link.getAttribute('href');
-                if (!href) continue;
-                const id = href.replace(/.*\/user\//, '').split('?')[0];
-                if (!id) continue;
-
-                const name = link.textContent.trim();
-                if (!name || seen.has(id)) continue;
-                if (name.includes('游戏管理员') || name.includes('GM')) continue;
-
-                seen.add(id);
-
-                const parent = link.closest('.sc-jtRfpW, .player-card, [class*="player"]');
-                let isDead = false;
-                if (parent) {
-                    isDead = !!parent.querySelector('img[src*="dead"]') || parent.textContent.includes('死亡');
-                }
-
-                players.push({ id, name, isDead });
             }
-            if (players.length > 0) break;
         }
 
-        return players;
+        players.push({ id, name, isDead });
     }
 
+    return players;
+}
     // ============================================================
     // 4. 提取职业
     // ============================================================
@@ -251,7 +406,7 @@
     }
 
     // ============================================================
-    // 5. 循环函数（双向循环）
+    // 5. 循环函数
     // ============================================================
 
     function getNextJob(current, direction) {
@@ -298,20 +453,23 @@
     // 6. 全局状态
     // ============================================================
 
-    let currentPerspective = null;
-    let isCollapsed = false;
+    let settings = getSettings();
+    let currentPerspective = settings.perspective || null;
+    let isCollapsed = settings.collapsed || false;
     let cachedPlayers = [];
     let cachedJobList = [];
     let expandBtn = null;
     let toastTimer = null;
+    let isSettingsDirty = false;
+    let settingsModal = null;
+    let pendingSettings = null;
 
-    // 长按检测
     let longPressTimer = null;
     let isLongPress = false;
     const LONG_PRESS_DELAY = 500;
 
     // ============================================================
-    // 7. Toast 提示
+    // 7. Toast
     // ============================================================
 
     function showToast(msg, duration) {
@@ -341,7 +499,583 @@
     }
 
     // ============================================================
-    // 8. UI 创建
+    // 8. 获取当前主题颜色
+    // ============================================================
+
+    function getCurrentTheme(settings) {
+        if (settings.theme === 'system') {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        return settings.theme;
+    }
+
+    function getThemeColors(settings) {
+        const theme = getCurrentTheme(settings);
+        return settings.colors[theme] || settings.colors.dark;
+    }
+
+    // ============================================================
+    // 9. 应用设置到侧栏
+    // ============================================================
+
+    function applySettingsToSidebar(settingsOverride) {
+        const s = document.getElementById('werewolf-sidebar');
+        if (!s) return;
+
+        const activeSettings = settingsOverride || settings;
+        const theme = getCurrentTheme(activeSettings);
+        const themeColors = getThemeColors(activeSettings);
+
+        s.style.background = themeColors.bg;
+        s.style.color = themeColors.text;
+        s.style.borderColor = themeColors.border;
+
+        const titleBar = document.getElementById('werewolf-titlebar');
+        if (titleBar) {
+            titleBar.style.color = themeColors.text;
+            titleBar.style.borderBottomColor = themeColors.divider;
+        }
+
+        const toolbar = document.getElementById('werewolf-toolbar');
+        if (toolbar) {
+            toolbar.style.borderTopColor = themeColors.divider;
+            const buttons = toolbar.querySelectorAll('button');
+            const isDark = theme === 'dark';
+            buttons.forEach(btn => {
+                btn.style.color = themeColors.textSecondary;
+                btn.style.borderColor = themeColors.border;
+                btn.style.background = isDark ? 'rgba(60,60,80,0.5)' : 'rgba(200,200,215,0.5)';
+                btn.style.height = '22px';
+                btn.style.lineHeight = '22px';
+            });
+        }
+
+        const ind = document.getElementById('perspective-indicator');
+        if (ind) {
+            ind.style.color = currentPerspective ? themeColors.view : themeColors.mark;
+        }
+
+        const widthMap = { small: '140px', medium: '180px', large: '220px' };
+        if (!isCollapsed) {
+            s.style.width = widthMap[activeSettings.width] || '180px';
+        }
+
+        if (activeSettings.position === 'right') {
+            s.style.left = 'auto';
+            s.style.right = '0';
+            s.style.borderRadius = '6px 0 0 6px';
+            s.style.borderRight = 'none';
+            s.style.borderLeft = `2px solid ${themeColors.border}`;
+            if (expandBtn) {
+                expandBtn.style.left = 'auto';
+                expandBtn.style.right = '0';
+                expandBtn.style.borderRadius = '4px 0 0 4px';
+                expandBtn.style.borderLeft = `1px solid ${themeColors.border}`;
+                expandBtn.style.borderRight = 'none';
+            }
+        } else {
+            s.style.left = '0';
+            s.style.right = 'auto';
+            s.style.borderRadius = '0 6px 6px 0';
+            s.style.borderRight = `2px solid ${themeColors.border}`;
+            s.style.borderLeft = 'none';
+            if (expandBtn) {
+                expandBtn.style.left = '0';
+                expandBtn.style.right = 'auto';
+                expandBtn.style.borderRadius = '0 4px 4px 0';
+                expandBtn.style.borderRight = `1px solid ${themeColors.border}`;
+                expandBtn.style.borderLeft = 'none';
+            }
+        }
+
+        if (cachedPlayers.length > 0) {
+            renderPlayerList(cachedPlayers, activeSettings);
+        }
+
+        if (expandBtn) {
+            expandBtn.style.background = themeColors.bg;
+            expandBtn.style.color = themeColors.text;
+            expandBtn.style.borderColor = themeColors.border;
+        }
+    }
+
+    // ============================================================
+    // 10. 计算行高
+    // ============================================================
+
+    function calcLineHeight(playerCount, fontSize, containerHeight) {
+        const baseLineHeight = fontSize + 4;
+        const maxHeight = containerHeight || 300;
+        const totalContentHeight = playerCount * baseLineHeight;
+
+        if (totalContentHeight <= maxHeight) {
+            return baseLineHeight;
+        }
+
+        const scale = maxHeight / totalContentHeight;
+        const minLineHeight = fontSize + 1;
+        const newLineHeight = Math.max(minLineHeight, Math.round(baseLineHeight * scale));
+        return Math.max(newLineHeight, minLineHeight);
+    }
+
+    // ============================================================
+    // 11. 设置面板
+    // ============================================================
+
+    function openSettings() {
+        if (settingsModal) {
+            settingsModal.style.display = 'block';
+            return;
+        }
+
+        pendingSettings = JSON.parse(JSON.stringify(settings));
+        isSettingsDirty = false;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'werewolf-settings-overlay';
+        overlay.style.cssText = `
+            position:fixed;top:0;left:0;width:100%;height:100%;
+            background:rgba(0,0,0,0.6);
+            z-index:10002;
+            display:flex;justify-content:center;align-items:center;
+        `;
+
+        const modal = document.createElement('div');
+        modal.id = 'werewolf-settings-modal';
+        const themeColors = getThemeColors(settings);
+        modal.style.cssText = `
+            background:${themeColors.bg};
+            color:${themeColors.text};
+            border-radius:12px;
+            padding:24px 28px;
+            max-width:560px;
+            width:90%;
+            max-height:85vh;
+            overflow-y:auto;
+            font-family:'Microsoft YaHei',sans-serif;
+            font-size:13px;
+            box-shadow:0 20px 60px rgba(0,0,0,0.5);
+            border:1px solid ${themeColors.border};
+            position:relative;
+        `;
+
+        let titleText = '设置';
+        if (isSettingsDirty) titleText += ' *';
+        modal.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid ${themeColors.divider};padding-bottom:12px;">
+                <h2 id="settings-title" style="margin:0;font-size:16px;font-weight:bold;">${titleText}</h2>
+                <button id="settings-close-btn" style="background:none;border:none;color:${themeColors.textSecondary};font-size:20px;cursor:pointer;padding:0 4px;">×</button>
+            </div>
+            <div id="settings-body"></div>
+            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;border-top:1px solid ${themeColors.divider};padding-top:14px;">
+                <button id="settings-reset-jobcolors-btn" style="padding:6px 14px;border-radius:4px;border:1px solid ${themeColors.border};background:transparent;color:${themeColors.textSecondary};cursor:pointer;font-size:12px;">重置职业颜色</button>
+                <button id="settings-reset-colors-btn" style="padding:6px 14px;border-radius:4px;border:1px solid ${themeColors.border};background:transparent;color:${themeColors.textSecondary};cursor:pointer;font-size:12px;">重置界面颜色</button>
+                <button id="settings-save-btn" style="padding:6px 20px;border-radius:4px;border:none;background:#4a8a5a;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">保存</button>
+            </div>
+        `;
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        settingsModal = overlay;
+
+        renderSettingsBody();
+
+        modal.querySelector('#settings-close-btn').addEventListener('click', () => {
+            if (isSettingsDirty) {
+                if (confirm('您有未保存的修改，确定要关闭吗？')) {
+                    closeSettings();
+                }
+            } else {
+                closeSettings();
+            }
+        });
+
+        modal.querySelector('#settings-save-btn').addEventListener('click', saveSettingsFromModal);
+
+        modal.querySelector('#settings-reset-jobcolors-btn').addEventListener('click', () => {
+            if (confirm('重置所有职业颜色到默认值？')) {
+                pendingSettings.jobColorPreset = defaultSettings.jobColorPreset;
+                pendingSettings.jobColors = {};
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                renderSettingsBody();
+                bindSettingsEvents();
+                previewSettings();
+            }
+        });
+
+        modal.querySelector('#settings-reset-colors-btn').addEventListener('click', () => {
+            if (confirm('重置所有界面颜色到默认值？')) {
+                pendingSettings.colors = JSON.parse(JSON.stringify(defaultSettings.colors));
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                renderSettingsBody();
+                bindSettingsEvents();
+                previewSettings();
+            }
+        });
+
+        bindSettingsEvents();
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                if (isSettingsDirty) {
+                    if (confirm('您有未保存的修改，确定要关闭吗？')) {
+                        closeSettings();
+                    }
+                } else {
+                    closeSettings();
+                }
+            }
+        });
+
+        document.addEventListener('keydown', onSettingsKeydown);
+    }
+
+    function closeSettings() {
+        if (settingsModal) {
+            settingsModal.remove();
+            settingsModal = null;
+        }
+        pendingSettings = null;
+        isSettingsDirty = false;
+        document.removeEventListener('keydown', onSettingsKeydown);
+    }
+
+    function onSettingsKeydown(e) {
+        if (e.key === 'Escape') {
+            if (isSettingsDirty) {
+                if (confirm('您有未保存的修改，确定要关闭吗？')) {
+                    closeSettings();
+                }
+            } else {
+                closeSettings();
+            }
+        }
+    }
+
+    function updateSettingsTitle() {
+        const modal = document.getElementById('werewolf-settings-modal');
+        if (!modal) return;
+        const title = modal.querySelector('#settings-title');
+        if (title) {
+            title.textContent = isSettingsDirty ? '设置 *' : '设置';
+        }
+    }
+
+    function renderSettingsHTML() {
+        const c = pendingSettings || settings;
+        const theme = getCurrentTheme(c);
+        const colors = c.colors[theme] || c.colors.dark;
+
+        const presetColors = getPresetJobColors(
+            c.jobColorPreset === 'custom' ? 'classic' : c.jobColorPreset,
+            theme
+        );
+        const userColors = c.jobColors || {};
+
+        const presetJobs = ['村人', '占卜师', '灵能者', '人狼', '狂人', '妖狐', '猎人', '共有者', '面包店'];
+        let jobColorRows = '';
+        for (const job of presetJobs) {
+            let color;
+            if (c.jobColorPreset === 'custom' && userColors[job]) {
+                color = userColors[job];
+            } else {
+                color = presetColors[job] || '#888';
+            }
+            const isCustom = c.jobColorPreset === 'custom';
+            jobColorRows += `
+                <div style="display:flex;align-items:center;gap:6px;margin:2px 0;">
+                    <span style="width:60px;font-size:11px;color:${colors.textSecondary};">${job}</span>
+                    <input type="color" data-job-color="${job}" value="${color}" style="width:32px;height:28px;padding:0;border:1px solid ${colors.border};border-radius:3px;cursor:pointer;background:transparent;" ${isCustom ? '' : 'disabled'}>
+                    <button data-job-reset="${job}" style="font-size:10px;padding:0 6px;background:transparent;border:1px solid ${colors.border};border-radius:2px;color:${colors.textSecondary};cursor:pointer;${isCustom ? '' : 'display:none;'}">↺</button>
+                </div>
+            `;
+        }
+
+        const presets = [
+            { key: 'classic', label: '经典' },
+            { key: 'soft', label: '柔和' },
+            { key: 'highcontrast', label: '高对比' },
+            { key: 'colorblind', label: '色盲友好' },
+            { key: 'custom', label: '自定义' }
+        ];
+        let presetButtons = '';
+        for (const p of presets) {
+            const active = c.jobColorPreset === p.key;
+            presetButtons += `
+                <button data-preset="${p.key}" style="padding:3px 10px;border-radius:3px;border:1px solid ${active ? '#66aadd' : colors.border};background:${active ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${active ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:11px;">${p.label}</button>
+            `;
+        }
+
+        const colorItems = [
+            { key: 'bg', label: '侧栏背景' },
+            { key: 'text', label: '主文字' },
+            { key: 'textSecondary', label: '次要文字' },
+            { key: 'border', label: '边框' },
+            { key: 'divider', label: '分割线' },
+            { key: 'highlight', label: '高亮' },
+            { key: 'hover', label: '悬停' },
+            { key: 'mark', label: '标记符号' },
+            { key: 'view', label: '视角指示' }
+        ];
+        let colorRows = '';
+        for (const item of colorItems) {
+            const value = colors[item.key] || '';
+            const isTransparent = value === 'transparent';
+            const displayValue = isTransparent ? '#ffffff' : value;
+            colorRows += `
+                <div style="display:flex;align-items:center;gap:4px;">
+                    <label style="font-size:11px;color:${colors.textSecondary};width:60px;flex-shrink:0;">${item.label}</label>
+                    <input type="color" data-color-key="${item.key}" value="${displayValue}" style="width:28px;height:24px;padding:0;border:1px solid ${colors.border};border-radius:3px;cursor:pointer;background:transparent;">
+                    ${isTransparent ? '<span style="font-size:9px;color:'+colors.textSecondary+';">透明</span>' : ''}
+                </div>
+            `;
+        }
+
+        const posLeftActive = c.position === 'left';
+        const posRightActive = c.position === 'right';
+
+        const themeActive = c.theme;
+        const themeButtons = `
+            <div style="display:flex;gap:4px;">
+                <button data-theme="light" style="flex:1;padding:4px 6px;border-radius:3px;border:1px solid ${themeActive === 'light' ? '#66aadd' : colors.border};background:${themeActive === 'light' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${themeActive === 'light' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:14px;line-height:1.4;">☀️</button>
+                <button data-theme="dark" style="flex:1;padding:4px 6px;border-radius:3px;border:1px solid ${themeActive === 'dark' ? '#66aadd' : colors.border};background:${themeActive === 'dark' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${themeActive === 'dark' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:14px;line-height:1.4;">🌙</button>
+                <button data-theme="system" style="flex:1;padding:4px 6px;border-radius:3px;border:1px solid ${themeActive === 'system' ? '#66aadd' : colors.border};background:${themeActive === 'system' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${themeActive === 'system' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;line-height:1.4;">系统</button>
+            </div>
+        `;
+
+        const fontSizeOptions = [8,9,10,11,12,13,14,15,16,17,18,19,20];
+        let fontSizeHTML = '';
+        for (const size of fontSizeOptions) {
+            const selected = c.baseFontSize == size ? 'selected' : '';
+            fontSizeHTML += `<option value="${size}" ${selected}>${size}px</option>`;
+        }
+
+        return `
+            <div style="margin-bottom:16px;">
+                <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">通用</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;">
+                    <div>
+                        <label style="font-size:12px;color:${colors.textSecondary};display:block;margin-bottom:2px;">主题</label>
+                        ${themeButtons}
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:${colors.textSecondary};display:block;margin-bottom:2px;">侧栏位置</label>
+                        <div style="display:flex;gap:4px;">
+                            <button data-position="left" style="flex:1;padding:4px 6px;border-radius:3px;border:1px solid ${posLeftActive ? '#66aadd' : colors.border};background:${posLeftActive ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${posLeftActive ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;">左侧</button>
+                            <button data-position="right" style="flex:1;padding:4px 6px;border-radius:3px;border:1px solid ${posRightActive ? '#66aadd' : colors.border};background:${posRightActive ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${posRightActive ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;">右侧</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:${colors.textSecondary};display:block;margin-bottom:2px;">宽度</label>
+                        <select data-setting="width" style="width:100%;padding:4px 6px;border-radius:3px;border:1px solid ${colors.border};background:${colors.bg};color:${colors.text};font-size:12px;">
+                            <option value="small" ${c.width === 'small' ? 'selected' : ''}>小 (140px)</option>
+                            <option value="medium" ${c.width === 'medium' ? 'selected' : ''}>中 (180px)</option>
+                            <option value="large" ${c.width === 'large' ? 'selected' : ''}>大 (220px)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:${colors.textSecondary};display:block;margin-bottom:2px;">基础字号</label>
+                        <select data-setting="baseFontSize" style="width:100%;padding:4px 6px;border-radius:3px;border:1px solid ${colors.border};background:${colors.bg};color:${colors.text};font-size:12px;">
+                            ${fontSizeHTML}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-bottom:16px;">
+                <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">死亡玩家</h3>
+                <div>
+                    <label style="font-size:12px;color:${colors.textSecondary};display:block;margin-bottom:2px;">文字透明度：${(c.deathOpacity * 100).toFixed(0)}%</label>
+                    <input type="range" data-setting="deathOpacity" min="0.15" max="0.75" step="0.05" value="${c.deathOpacity}" style="width:100%;">
+                    <div style="display:flex;justify-content:space-between;font-size:10px;color:${colors.textSecondary};">
+                        <span>15%</span>
+                        <span>75%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-bottom:16px;">
+                <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">职业颜色</h3>
+                <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+                    ${presetButtons}
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;max-height:180px;overflow-y:auto;border:1px solid ${colors.divider};border-radius:4px;padding:6px 8px;">
+                    ${jobColorRows}
+                </div>
+            </div>
+
+            <div>
+                <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">界面颜色</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;">
+                    ${colorRows}
+                </div>
+            </div>
+        `;
+    }
+
+    function renderSettingsBody() {
+        const modal = document.getElementById('werewolf-settings-modal');
+        if (!modal) return;
+        const body = modal.querySelector('#settings-body');
+        if (body) {
+            body.innerHTML = renderSettingsHTML();
+        }
+        const c = pendingSettings || settings;
+        const theme = getCurrentTheme(c);
+        const colors = c.colors[theme] || c.colors.dark;
+        modal.style.background = colors.bg;
+        modal.style.color = colors.text;
+        modal.style.borderColor = colors.border;
+        const titleDiv = modal.querySelector('div:first-child');
+        if (titleDiv) {
+            titleDiv.style.borderBottomColor = colors.divider;
+        }
+        const closeBtn = modal.querySelector('#settings-close-btn');
+        if (closeBtn) {
+            closeBtn.style.color = colors.textSecondary;
+        }
+        const resetBtns = modal.querySelectorAll('#settings-reset-jobcolors-btn, #settings-reset-colors-btn');
+        resetBtns.forEach(btn => {
+            btn.style.color = colors.textSecondary;
+            btn.style.borderColor = colors.border;
+        });
+    }
+
+    function bindSettingsEvents() {
+        const modal = document.getElementById('werewolf-settings-modal');
+        if (!modal) return;
+
+        modal.querySelectorAll('[data-theme]').forEach(el => {
+            el.addEventListener('click', () => {
+                pendingSettings.theme = el.dataset.theme;
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                renderSettingsBody();
+                bindSettingsEvents();
+                previewSettings();
+            });
+        });
+
+        modal.querySelectorAll('[data-setting]').forEach(el => {
+            const eventType = el.type === 'checkbox' ? 'change' : 'input';
+            el.addEventListener(eventType, () => {
+                const key = el.dataset.setting;
+                let value;
+                if (el.type === 'checkbox') {
+                    value = el.checked;
+                } else if (el.type === 'range') {
+                    value = parseFloat(el.value);
+                } else if (el.type === 'number') {
+                    value = parseInt(el.value) || 0;
+                } else {
+                    value = el.value;
+                }
+                if (key === 'baseFontSize') {
+                    value = Number(value) || 11;
+                }
+                pendingSettings[key] = value;
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                previewSettings();
+
+                if (el.type === 'range') {
+                    const label = el.closest('div')?.querySelector('label');
+                    if (label) {
+                        label.textContent = `文字透明度：${(value * 100).toFixed(0)}%`;
+                    }
+                }
+            });
+        });
+
+        modal.querySelectorAll('[data-position]').forEach(el => {
+            el.addEventListener('click', () => {
+                pendingSettings.position = el.dataset.position;
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                renderSettingsBody();
+                bindSettingsEvents();
+                previewSettings();
+            });
+        });
+
+        modal.querySelectorAll('[data-preset]').forEach(el => {
+            el.addEventListener('click', () => {
+                pendingSettings.jobColorPreset = el.dataset.preset;
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                renderSettingsBody();
+                bindSettingsEvents();
+                previewSettings();
+            });
+        });
+
+        modal.querySelectorAll('[data-color-key]').forEach(el => {
+            el.addEventListener('input', () => {
+                const key = el.dataset.colorKey;
+                const theme = getCurrentTheme(pendingSettings);
+                pendingSettings.colors[theme][key] = el.value;
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                previewSettings();
+            });
+        });
+
+        modal.querySelectorAll('[data-job-color]').forEach(el => {
+            el.addEventListener('input', () => {
+                if (pendingSettings.jobColorPreset !== 'custom') {
+                    pendingSettings.jobColorPreset = 'custom';
+                    renderSettingsBody();
+                    bindSettingsEvents();
+                }
+                const job = el.dataset.jobColor;
+                if (!pendingSettings.jobColors) pendingSettings.jobColors = {};
+                pendingSettings.jobColors[job] = el.value;
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                previewSettings();
+            });
+        });
+
+        modal.querySelectorAll('[data-job-reset]').forEach(el => {
+            el.addEventListener('click', () => {
+                const job = el.dataset.jobReset;
+                if (pendingSettings.jobColors) {
+                    delete pendingSettings.jobColors[job];
+                }
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                renderSettingsBody();
+                bindSettingsEvents();
+                previewSettings();
+            });
+        });
+    }
+
+    function saveSettingsFromModal() {
+        if (!pendingSettings) return;
+        settings = JSON.parse(JSON.stringify(pendingSettings));
+        settings.perspective = currentPerspective;
+        settings.collapsed = isCollapsed;
+        saveSettings(settings);
+        isSettingsDirty = false;
+        updateSettingsTitle();
+        applySettingsToSidebar();
+        showToast('设置已保存', 1500);
+        closeSettings();
+    }
+
+    function previewSettings() {
+        if (!pendingSettings) return;
+        if (pendingSettings.deathOpacity === undefined) {
+            pendingSettings.deathOpacity = settings.deathOpacity || 0.5;
+        }
+        applySettingsToSidebar(pendingSettings);
+    }
+
+    // ============================================================
+    // 12. UI 创建
     // ============================================================
 
     function createSidebar() {
@@ -350,7 +1084,7 @@
         const sidebar = document.createElement('div');
         sidebar.id = 'werewolf-sidebar';
         sidebar.style.cssText = `
-            position:fixed;left:0;top:60px;width:180px;
+            position:fixed;left:0;top:60px;
             max-height:calc(100vh - 120px);
             background:rgba(30,30,40,0.95);
             border-right:2px solid #4a4a6a;
@@ -400,6 +1134,9 @@
             padding:1px 5px;border-radius:3px;cursor:pointer;font-size:10px;
             border:1px solid #4a4a6a;background:#2a2a3a;color:#a0a0b0;
             flex:1;text-align:center;min-width:0;
+            display:flex;align-items:center;justify-content:center;
+            white-space:nowrap;
+            height:22px;line-height:22px;
         `;
 
         const refreshBtn = document.createElement('button');
@@ -418,7 +1155,7 @@
 
         const resetBtn = document.createElement('button');
         resetBtn.textContent = '重置';
-        resetBtn.style.cssText = btnStyle + 'background:#3a2a3a;border-color:#6a4a4a;flex:0.5;';
+        resetBtn.style.cssText = btnStyle + 'background:#3a2a3a;border-color:#6a4a4a;';
         resetBtn.addEventListener('click', () => {
             store.clearAll();
             currentPerspective = null;
@@ -429,13 +1166,18 @@
             showToast('已重置', 1500);
         });
 
+        const settingsBtn = document.createElement('button');
+        settingsBtn.textContent = '⚙';
+        settingsBtn.style.cssText = btnStyle + 'background:#2a3a4a;border-color:#4a6a8a;font-size:14px;';
+        settingsBtn.addEventListener('click', openSettings);
+
         const collapseBtn = document.createElement('button');
         collapseBtn.id = 'werewolf-collapse-btn';
         collapseBtn.textContent = '<';
-        collapseBtn.style.cssText = btnStyle + 'flex:0.4;';
+        collapseBtn.style.cssText = btnStyle;
         collapseBtn.addEventListener('click', toggleSidebar);
 
-        toolbar.append(refreshBtn, exportBtn, resetBtn, collapseBtn);
+        toolbar.append(refreshBtn, exportBtn, resetBtn, settingsBtn, collapseBtn);
         sidebar.append(titleBar, playerList, toolbar);
         document.body.appendChild(sidebar);
 
@@ -458,11 +1200,35 @@
         sidebar.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }, true);
         sidebar.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); }, true);
 
+        applySettingsToSidebar();
+
+        if (isCollapsed) {
+            const s = document.getElementById('werewolf-sidebar');
+            if (s) {
+                s.style.width = '0px';
+                s.style.padding = '0px';
+                s.style.border = 'none';
+                s.style.overflow = 'hidden';
+                s.style.opacity = '0';
+                s.style.pointerEvents = 'none';
+                const list = document.getElementById('werewolf-player-list');
+                if (list) list.style.display = 'none';
+                const tb = document.getElementById('werewolf-toolbar');
+                if (tb) tb.style.display = 'none';
+                const tt = document.getElementById('werewolf-title-text');
+                if (tt) tt.textContent = '';
+                const ind = document.getElementById('perspective-indicator');
+                if (ind) ind.style.display = 'none';
+                if (collapseBtn) collapseBtn.style.display = 'none';
+                if (expandBtn) { expandBtn.style.display = 'block'; expandBtn.style.left = '0px'; }
+            }
+        }
+
         setTimeout(refreshAll, 500);
     }
 
     // ============================================================
-    // 9. 收起/展开
+    // 13. 收起/展开
     // ============================================================
 
     function toggleSidebar() {
@@ -474,6 +1240,12 @@
         const ind = document.getElementById('perspective-indicator');
         if (!s) return;
         isCollapsed = !isCollapsed;
+        settings.collapsed = isCollapsed;
+        saveSettings(settings);
+
+        const widthMap = { small: '140px', medium: '180px', large: '220px' };
+        const themeColors = getThemeColors(settings);
+
         if (isCollapsed) {
             s.style.width = '0px';
             s.style.padding = '0px';
@@ -486,12 +1258,27 @@
             if (tt) tt.textContent = '';
             if (ind) ind.style.display = 'none';
             if (cb) cb.style.display = 'none';
-            if (expandBtn) { expandBtn.style.display = 'block'; expandBtn.style.left = '0px'; }
+            if (expandBtn) {
+                expandBtn.style.display = 'block';
+                if (settings.position === 'right') {
+                    expandBtn.style.right = '0';
+                    expandBtn.style.left = 'auto';
+                } else {
+                    expandBtn.style.left = '0';
+                    expandBtn.style.right = 'auto';
+                }
+            }
         } else {
-            s.style.width = '180px';
+            s.style.width = widthMap[settings.width] || '180px';
             s.style.padding = '8px 6px';
-            s.style.border = '2px solid #4a4a6a';
-            s.style.borderLeft = 'none';
+            s.style.border = `2px solid ${themeColors.border}`;
+            if (settings.position === 'right') {
+                s.style.borderLeft = `2px solid ${themeColors.border}`;
+                s.style.borderRight = 'none';
+            } else {
+                s.style.borderRight = `2px solid ${themeColors.border}`;
+                s.style.borderLeft = 'none';
+            }
             s.style.overflow = 'hidden';
             s.style.opacity = '1';
             s.style.pointerEvents = 'auto';
@@ -505,24 +1292,25 @@
     }
 
     // ============================================================
-    // 10. 更新指示器
+    // 14. 更新指示器
     // ============================================================
 
     function updateIndicator() {
         const ind = document.getElementById('perspective-indicator');
         if (!ind) return;
+        const themeColors = getThemeColors(settings);
         if (currentPerspective) {
             const p = cachedPlayers.find(x => x.id === currentPerspective);
             ind.textContent = `视角 ${p ? p.name : currentPerspective}`;
-            ind.style.color = '#66ddff';
+            ind.style.color = themeColors.view || '#66ddff';
         } else {
             ind.textContent = '全局';
-            ind.style.color = '#ffaa66';
+            ind.style.color = themeColors.mark || '#ffaa66';
         }
     }
 
     // ============================================================
-    // 11. 刷新
+    // 15. 刷新
     // ============================================================
 
     function refreshAll() {
@@ -543,10 +1331,10 @@
     }
 
     // ============================================================
-    // 12. 渲染玩家列表
+    // 16. 渲染玩家列表
     // ============================================================
 
-    function renderPlayerList(players) {
+    function renderPlayerList(players, settingsOverride) {
         const container = document.getElementById('werewolf-player-list');
         if (!container) return;
         if (!players || players.length === 0) {
@@ -554,13 +1342,22 @@
             return;
         }
 
+        const activeSettings = settingsOverride || settings;
+        const fontSize = Number(activeSettings.baseFontSize) || 11;
+        const deathOpacity = Number(activeSettings.deathOpacity) || 0.5;
+
+        const containerHeight = container.clientHeight || 300;
+        const lineHeight = calcLineHeight(players.length, fontSize, containerHeight);
+
         const frag = document.createDocumentFragment();
-
         const data = store.get();
+        const theme = getCurrentTheme(activeSettings);
+        const themeColors = getThemeColors(activeSettings);
 
-        // 收集标记符号
-        // 全局视角：综合所有视角，包括 '自己'
-        // 玩家视角：只取当前视角，包括 '自己'
+        const dividerColor = theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+        const MARK_COLOR = themeColors.mark || '#ffaa66';
+        const VIEW_COLOR = themeColors.view || '#66ddff';
+
         let targetMarkMap = {};
         if (currentPerspective === null) {
             for (const perspective in data.action) {
@@ -575,13 +1372,9 @@
             }
         }
 
-        // ○● 统一橙色
-        const MARK_COLOR = '#ffaa66';
-
-        for (const player of players) {
+        players.forEach((player, index) => {
             const isSelf = (currentPerspective === player.id);
 
-            // 身份读取：全局视角读 global，玩家视角读当前视角
             let identity = null;
             if (currentPerspective === null) {
                 identity = store.getIdentity('global', player.id);
@@ -591,9 +1384,8 @@
                     identity = store.getIdentity('global', player.id);
                 }
             }
-            const color = identity ? getJobColor(identity) : '#888';
+            const color = identity ? getJobColor(identity, activeSettings) : '#888';
 
-            // 该玩家被标记的符号
             let markSymbol = null;
             if (isSelf && currentPerspective !== null && targetMarkMap['自己']) {
                 markSymbol = targetMarkMap['自己'];
@@ -604,25 +1396,26 @@
             const item = document.createElement('div');
             item.dataset.playerId = player.id;
             item.dataset.playerName = player.name;
+            const isLast = index === players.length - 1;
             item.style.cssText = `
-                display:flex;align-items:center;padding:1px 3px;margin:1px 0;
+                display:flex;align-items:center;padding:1px 3px;margin:0;
                 border-radius:2px;
-                background:${isSelf ? 'rgba(100,200,255,0.08)' : 'transparent'};
-                border-left:2px solid ${isSelf ? '#66ddff' : 'transparent'};
-                cursor:pointer;font-size:11px;gap:3px;
-                ${player.isDead ? 'opacity:0.3;' : ''}
-                transition:background 0.1s;min-height:18px;
-                user-select:none;
-                position:relative;
+                background:${isSelf ? themeColors.highlight : 'transparent'};
+                border-left:2px solid ${isSelf ? VIEW_COLOR : 'transparent'};
+                border-bottom:${isLast ? 'none' : '1px solid ' + dividerColor};
+                cursor:pointer;font-size:${fontSize}px;gap:3px;
+                ${player.isDead ? `opacity:${deathOpacity};` : ''}
+                transition:background 0.1s;min-height:${lineHeight}px;line-height:${lineHeight}px;
+                user-select:none;position:relative;
             `;
 
-            // ---- 左侧标记 ----
             const leftMark = document.createElement('span');
             leftMark.style.cssText = `
-                font-size:13px;flex-shrink:0;font-weight:900;
+                font-size:${fontSize}px;flex-shrink:0;font-weight:900;
                 min-width:16px;text-align:center;
                 color:${MARK_COLOR};
                 font-family:'Arial','Segoe UI Symbol',sans-serif;
+                line-height:${lineHeight}px;
             `;
 
             if (currentPerspective === null) {
@@ -640,23 +1433,25 @@
             }
             item.appendChild(leftMark);
 
-            // ---- 玩家名 ----
             const nameSpan = document.createElement('span');
-            nameSpan.style.cssText = `flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${color};font-size:11px;font-weight:${identity ? 'bold' : 'normal'};`;
+            nameSpan.style.cssText = `
+                flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                color:${color};font-size:${fontSize}px;line-height:${lineHeight}px;
+                font-weight:${identity ? 'bold' : 'normal'};
+            `;
             nameSpan.textContent = player.name;
             item.appendChild(nameSpan);
 
-            // ---- 右侧显示 ----
             if (identity) {
                 const s = document.createElement('span');
-                s.style.cssText = `font-size:8px;color:${color};flex-shrink:0;font-weight:bold;`;
+                s.style.cssText = `font-size:${Math.max(fontSize - 2, 7)}px;color:${color};flex-shrink:0;font-weight:bold;line-height:${lineHeight}px;`;
                 s.textContent = identity;
                 item.appendChild(s);
             } else if (currentPerspective === null && markSymbol) {
                 const s = document.createElement('span');
                 s.style.cssText = `
-                    font-size:13px;flex-shrink:0;font-weight:900;
-                    color:${MARK_COLOR};
+                    font-size:${fontSize}px;flex-shrink:0;font-weight:900;
+                    color:${MARK_COLOR};line-height:${lineHeight}px;
                     font-family:'Arial','Segoe UI Symbol',sans-serif;
                 `;
                 s.textContent = '○';
@@ -664,23 +1459,21 @@
             } else if (currentPerspective !== null && markSymbol && !identity) {
                 const s = document.createElement('span');
                 s.style.cssText = `
-                    font-size:13px;flex-shrink:0;font-weight:900;
-                    color:${MARK_COLOR};
+                    font-size:${fontSize}px;flex-shrink:0;font-weight:900;
+                    color:${MARK_COLOR};line-height:${lineHeight}px;
                     font-family:'Arial','Segoe UI Symbol',sans-serif;
                 `;
                 s.textContent = markSymbol;
                 item.appendChild(s);
             }
 
-            // ---- 当前视角标识 ----
             if (isSelf) {
                 const e = document.createElement('span');
                 e.textContent = 'V';
-                e.style.cssText = 'font-size:8px;flex-shrink:0;color:#66ddff;';
+                e.style.cssText = `font-size:${Math.max(fontSize - 2, 7)}px;flex-shrink:0;color:${VIEW_COLOR};line-height:${lineHeight}px;`;
                 item.appendChild(e);
             }
 
-            // ---- 长按辅助函数 ----
             const clearLongPress = () => {
                 if (longPressTimer) {
                     clearTimeout(longPressTimer);
@@ -737,7 +1530,6 @@
                 }
             };
 
-            // ---- 左键：身份轮换 ----
             item.addEventListener('click', (e) => {
                 if (isLongPress) {
                     e.stopPropagation();
@@ -759,7 +1551,6 @@
                 renderPlayerList(cachedPlayers);
             });
 
-            // ---- 滚轮：快速切换 ----
             item.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -799,7 +1590,6 @@
                 renderPlayerList(cachedPlayers);
             }, { passive: false });
 
-            // ---- 右键：视角切换 ----
             item.addEventListener('contextmenu', (e) => {
                 if (isLongPress) {
                     e.preventDefault();
@@ -812,17 +1602,20 @@
 
                 if (currentPerspective === id) {
                     currentPerspective = null;
+                    settings.perspective = null;
+                    saveSettings(settings);
                     updateIndicator();
                     renderPlayerList(cachedPlayers);
                     return;
                 }
 
                 currentPerspective = id;
+                settings.perspective = id;
+                saveSettings(settings);
                 updateIndicator();
                 renderPlayerList(cachedPlayers);
             });
 
-            // ---- 中键：清空行动记录 ----
             item.addEventListener('auxclick', (e) => {
                 if (e.button !== 1) return;
                 e.preventDefault();
@@ -857,22 +1650,22 @@
 
             item.addEventListener('mouseenter', () => {
                 const v = (currentPerspective === item.dataset.playerId);
-                item.style.background = v ? 'rgba(100,200,255,0.15)' : 'rgba(100,200,255,0.04)';
+                item.style.background = v ? themeColors.highlight : themeColors.hover;
             });
             item.addEventListener('mouseleave', () => {
                 const v = (currentPerspective === item.dataset.playerId);
-                item.style.background = v ? 'rgba(100,200,255,0.08)' : 'transparent';
+                item.style.background = v ? themeColors.highlight : 'transparent';
             });
 
             frag.appendChild(item);
-        }
+        });
 
         container.innerHTML = '';
         container.appendChild(frag);
     }
 
     // ============================================================
-    // 13. 导出
+    // 17. 导出
     // ============================================================
 
     function exportTable() {
@@ -944,8 +1737,21 @@
     }
 
     // ============================================================
-    // 14. 初始化
+    // 18. 初始化
     // ============================================================
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (settings.theme === 'system') {
+            applySettingsToSidebar();
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+            e.preventDefault();
+            openSettings();
+        }
+    });
 
     function init() {
         if (document.readyState === 'loading') {
