@@ -8,8 +8,8 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @license      GPL-3.0
-// @downloadURL  https://github.com/hebaiser/werewolf-helper/raw/refs/heads/main/werewolf-helper.user.js
-// @updateURL    https://github.com/hebaiser/werewolf-helper/raw/refs/heads/main/werewolf-helper.user.js
+// @downloadURL https://update.greasyfork.org/scripts/592666/%E6%9C%88%E4%B8%8B%E4%BA%BA%E7%8B%BC%20%E6%99%AE%E6%9D%91%E7%8B%BC%E5%8A%A9%E7%90%86.user.js
+// @updateURL https://update.greasyfork.org/scripts/592666/%E6%9C%88%E4%B8%8B%E4%BA%BA%E7%8B%BC%20%E6%99%AE%E6%9D%91%E7%8B%BC%E5%8A%A9%E7%90%86.meta.js
 // ==/UserScript==
 
 
