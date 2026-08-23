@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
-// @namespace    hbser3@gmail.com
-// @version      0.8.5
+// @namespace    https://github.com/hebaiser/werewolf-helper
+// @version      0.1.0
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @downloadURL  https://github.com/hebaiser/werewolf-helper/raw/refs/heads/main/werewolf-helper.user.js
+// @updateURL    https://github.com/hebaiser/werewolf-helper/raw/refs/heads/main/werewolf-helper.user.js
 // ==/UserScript==
 
 
