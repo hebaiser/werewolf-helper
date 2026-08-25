@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.1
+// @version      0.1.2
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -72,7 +72,14 @@
         jobColorPreset: 'classic',
         jobColors: {},
         perspective: null,
-        collapsed: false
+        collapsed: false,
+        operationMode: 'quick',
+        showPreview: false,
+        showCommonGray: false,
+        showIndependentGray: false,
+        previewOpacity: 0.9,
+        previewSize: 'medium',
+        previewPosition: null
     };
 
     function getSettings() {
@@ -90,6 +97,11 @@
         }
         if (merged.baseFontSize) {
             merged.baseFontSize = Number(merged.baseFontSize) || 11;
+        }
+        for (const key in defaultSettings) {
+            if (!(key in merged)) {
+                merged[key] = defaultSettings[key];
+            }
         }
         return merged;
     }
@@ -128,21 +140,52 @@
         },
         getAction(operatorId) {
             const data = this.get();
-            if (!data.action[operatorId]) return {};
+            if (!data.action[operatorId]) {
+                return { targets: [], death: null };
+            }
             return data.action[operatorId];
         },
         getActionTarget(operatorId, targetName) {
             const data = this.get();
             if (!data.action[operatorId]) return null;
-            return data.action[operatorId][targetName] || null;
+            const actionData = data.action[operatorId];
+            if (actionData.targets) {
+                const entry = actionData.targets.find(t => t.target === targetName);
+                if (entry) return entry.symbol;
+            }
+            if (targetName === '自己' && actionData.death) {
+                return actionData.death;
+            }
+            return null;
         },
         setAction(operatorId, targetName, symbol) {
             const data = this.get();
-            if (!data.action[operatorId]) data.action[operatorId] = {};
-            if (symbol === null) {
-                delete data.action[operatorId][targetName];
+            if (!data.action[operatorId]) {
+                data.action[operatorId] = { targets: [], death: null };
+            }
+            const actionData = data.action[operatorId];
+
+            if (targetName === '自己') {
+                if (symbol === null) {
+                    actionData.death = null;
+                } else {
+                    actionData.death = symbol;
+                }
             } else {
-                data.action[operatorId][targetName] = symbol;
+                if (symbol === null) {
+                    actionData.targets = actionData.targets.filter(
+                        entry => entry.target !== targetName
+                    );
+                } else {
+                    actionData.targets.push({ target: targetName, symbol: symbol });
+                }
+            }
+            this.set(data);
+        },
+        clearAction(operatorId) {
+            const data = this.get();
+            if (data.action[operatorId]) {
+                data.action[operatorId] = { targets: [], death: null };
             }
             this.set(data);
         },
@@ -162,7 +205,7 @@
     };
 
     // ============================================================
-    // 2. 颜色 - 深色/浅色两套职业预设
+    // 2. 颜色
     // ============================================================
 
     function generateJobColors(jobList) {
@@ -295,45 +338,33 @@
     // 3. 查找玩家
     // ============================================================
 
-function findPlayers() {
-    const players = [];
-    const seen = new Set();
-
-    // 直接用最稳定的选择器：所有玩家链接
-    const links = document.querySelectorAll('a[href^="/user/"]');
-
-    for (const link of links) {
-        const href = link.getAttribute('href');
-        const id = href.replace(/.*\/user\//, '').split('?')[0];
-        if (!id || seen.has(id)) continue;
-
-        const name = link.textContent.trim();
-        if (!name || name.includes('游戏管理员') || name === '游戏管理员') continue;
-
-        seen.add(id);
-
-        // 死亡检测：从link向上找.sc-gxMtzJ容器
-        let isDead = false;
-
-        // 替身君固定死亡
-        if (name === '替身君') {
-            isDead = true;
-        } else {
-            // 获取父容器 .sc-gxMtzJ
-            let container = link.closest('.sc-gxMtzJ');
-            if (container) {
-                // 检查容器内有没有死亡图标
-                if (container.querySelector('img[alt="死亡"]')) {
-                    isDead = true;
+    function findPlayers() {
+        const players = [];
+        const seen = new Set();
+        const links = document.querySelectorAll('a[href^="/user/"]');
+        for (const link of links) {
+            const href = link.getAttribute('href');
+            const id = href.replace(/.*\/user\//, '').split('?')[0];
+            if (!id || seen.has(id)) continue;
+            const name = link.textContent.trim();
+            if (!name || name.includes('游戏管理员') || name === '游戏管理员') continue;
+            seen.add(id);
+            let isDead = false;
+            if (name === '替身君') {
+                isDead = true;
+            } else {
+                let container = link.closest('.sc-gxMtzJ');
+                if (container) {
+                    if (container.querySelector('img[alt="死亡"]')) {
+                        isDead = true;
+                    }
                 }
             }
+            players.push({ id, name, isDead });
         }
-
-        players.push({ id, name, isDead });
+        return players;
     }
 
-    return players;
-}
     // ============================================================
     // 4. 提取职业
     // ============================================================
@@ -341,12 +372,10 @@ function findPlayers() {
     function extractJobList() {
         const order = [];
         const skip = ['昼', '夜', '犹豫', '投票', '时间', '阶段', '规则', '说明'];
-
         const logs = document.querySelectorAll('.sc-fYxtnH, .log-entry, [class*="log"]');
         for (const entry of logs) {
             const text = entry.textContent || '';
             if (!text.includes('配置:')) continue;
-
             let m = text.match(/配置:\s*([\s\S]+?)(?:\n|$)/);
             if (m) {
                 const parts = m[1].trim().split(/\s+/);
@@ -363,7 +392,6 @@ function findPlayers() {
                 if (idx > -1) { order.splice(idx, 1); order.push('村人'); }
                 if (order.length > 0) return order;
             }
-
             m = text.match(/配置:\s*\/(.+?)(?:\n|$)/);
             if (m) {
                 const parts = m[1].trim().split('/');
@@ -381,7 +409,6 @@ function findPlayers() {
                 if (order.length > 0) return order;
             }
         }
-
         const table = document.querySelector('.sc-lhVmIH, table.roles, [class*="rule"]');
         if (table) {
             const rows = table.querySelectorAll('tr');
@@ -397,11 +424,9 @@ function findPlayers() {
             }
             if (!order.includes('村人')) order.push('村人');
         }
-
         if (order.length === 0) {
             order.push('村人', '占卜师', '灵能者', '人狼');
         }
-
         return order;
     }
 
@@ -463,9 +488,10 @@ function findPlayers() {
     let isSettingsDirty = false;
     let settingsModal = null;
     let pendingSettings = null;
-
     let longPressTimer = null;
     let isLongPress = false;
+    let previewWindow = null;
+    let previewBlocks = [];
     const LONG_PRESS_DELAY = 500;
 
     // ============================================================
@@ -477,7 +503,6 @@ function findPlayers() {
         const existing = document.getElementById('werewolf-toast');
         if (existing) existing.remove();
         if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
-
         const toast = document.createElement('div');
         toast.id = 'werewolf-toast';
         toast.style.cssText = `
@@ -490,7 +515,6 @@ function findPlayers() {
         `;
         toast.textContent = msg;
         document.body.appendChild(toast);
-
         toastTimer = setTimeout(() => {
             toast.style.opacity = '0';
             setTimeout(() => { if (toast.parentNode) toast.remove(); }, 300);
@@ -521,21 +545,17 @@ function findPlayers() {
     function applySettingsToSidebar(settingsOverride) {
         const s = document.getElementById('werewolf-sidebar');
         if (!s) return;
-
         const activeSettings = settingsOverride || settings;
         const theme = getCurrentTheme(activeSettings);
         const themeColors = getThemeColors(activeSettings);
-
         s.style.background = themeColors.bg;
         s.style.color = themeColors.text;
         s.style.borderColor = themeColors.border;
-
         const titleBar = document.getElementById('werewolf-titlebar');
         if (titleBar) {
             titleBar.style.color = themeColors.text;
             titleBar.style.borderBottomColor = themeColors.divider;
         }
-
         const toolbar = document.getElementById('werewolf-toolbar');
         if (toolbar) {
             toolbar.style.borderTopColor = themeColors.divider;
@@ -549,17 +569,14 @@ function findPlayers() {
                 btn.style.lineHeight = '22px';
             });
         }
-
         const ind = document.getElementById('perspective-indicator');
         if (ind) {
             ind.style.color = currentPerspective ? themeColors.view : themeColors.mark;
         }
-
         const widthMap = { small: '140px', medium: '180px', large: '220px' };
         if (!isCollapsed) {
             s.style.width = widthMap[activeSettings.width] || '180px';
         }
-
         if (activeSettings.position === 'right') {
             s.style.left = 'auto';
             s.style.right = '0';
@@ -587,11 +604,9 @@ function findPlayers() {
                 expandBtn.style.borderLeft = 'none';
             }
         }
-
         if (cachedPlayers.length > 0) {
             renderPlayerList(cachedPlayers, activeSettings);
         }
-
         if (expandBtn) {
             expandBtn.style.background = themeColors.bg;
             expandBtn.style.color = themeColors.text;
@@ -607,11 +622,9 @@ function findPlayers() {
         const baseLineHeight = fontSize + 4;
         const maxHeight = containerHeight || 300;
         const totalContentHeight = playerCount * baseLineHeight;
-
         if (totalContentHeight <= maxHeight) {
             return baseLineHeight;
         }
-
         const scale = maxHeight / totalContentHeight;
         const minLineHeight = fontSize + 1;
         const newLineHeight = Math.max(minLineHeight, Math.round(baseLineHeight * scale));
@@ -627,10 +640,8 @@ function findPlayers() {
             settingsModal.style.display = 'block';
             return;
         }
-
         pendingSettings = JSON.parse(JSON.stringify(settings));
         isSettingsDirty = false;
-
         const overlay = document.createElement('div');
         overlay.id = 'werewolf-settings-overlay';
         overlay.style.cssText = `
@@ -639,7 +650,6 @@ function findPlayers() {
             z-index:10002;
             display:flex;justify-content:center;align-items:center;
         `;
-
         const modal = document.createElement('div');
         modal.id = 'werewolf-settings-modal';
         const themeColors = getThemeColors(settings);
@@ -648,7 +658,7 @@ function findPlayers() {
             color:${themeColors.text};
             border-radius:12px;
             padding:24px 28px;
-            max-width:560px;
+            max-width:620px;
             width:90%;
             max-height:85vh;
             overflow-y:auto;
@@ -658,7 +668,6 @@ function findPlayers() {
             border:1px solid ${themeColors.border};
             position:relative;
         `;
-
         let titleText = '设置';
         if (isSettingsDirty) titleText += ' *';
         modal.innerHTML = `
@@ -673,13 +682,10 @@ function findPlayers() {
                 <button id="settings-save-btn" style="padding:6px 20px;border-radius:4px;border:none;background:#4a8a5a;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">保存</button>
             </div>
         `;
-
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
         settingsModal = overlay;
-
         renderSettingsBody();
-
         modal.querySelector('#settings-close-btn').addEventListener('click', () => {
             if (isSettingsDirty) {
                 if (confirm('您有未保存的修改，确定要关闭吗？')) {
@@ -689,9 +695,7 @@ function findPlayers() {
                 closeSettings();
             }
         });
-
         modal.querySelector('#settings-save-btn').addEventListener('click', saveSettingsFromModal);
-
         modal.querySelector('#settings-reset-jobcolors-btn').addEventListener('click', () => {
             if (confirm('重置所有职业颜色到默认值？')) {
                 pendingSettings.jobColorPreset = defaultSettings.jobColorPreset;
@@ -703,7 +707,6 @@ function findPlayers() {
                 previewSettings();
             }
         });
-
         modal.querySelector('#settings-reset-colors-btn').addEventListener('click', () => {
             if (confirm('重置所有界面颜色到默认值？')) {
                 pendingSettings.colors = JSON.parse(JSON.stringify(defaultSettings.colors));
@@ -714,9 +717,7 @@ function findPlayers() {
                 previewSettings();
             }
         });
-
         bindSettingsEvents();
-
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
                 if (isSettingsDirty) {
@@ -728,7 +729,6 @@ function findPlayers() {
                 }
             }
         });
-
         document.addEventListener('keydown', onSettingsKeydown);
     }
 
@@ -767,13 +767,11 @@ function findPlayers() {
         const c = pendingSettings || settings;
         const theme = getCurrentTheme(c);
         const colors = c.colors[theme] || c.colors.dark;
-
         const presetColors = getPresetJobColors(
             c.jobColorPreset === 'custom' ? 'classic' : c.jobColorPreset,
             theme
         );
         const userColors = c.jobColors || {};
-
         const presetJobs = ['村人', '占卜师', '灵能者', '人狼', '狂人', '妖狐', '猎人', '共有者', '面包店'];
         let jobColorRows = '';
         for (const job of presetJobs) {
@@ -792,7 +790,6 @@ function findPlayers() {
                 </div>
             `;
         }
-
         const presets = [
             { key: 'classic', label: '经典' },
             { key: 'soft', label: '柔和' },
@@ -807,7 +804,6 @@ function findPlayers() {
                 <button data-preset="${p.key}" style="padding:3px 10px;border-radius:3px;border:1px solid ${active ? '#66aadd' : colors.border};background:${active ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${active ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:11px;">${p.label}</button>
             `;
         }
-
         const colorItems = [
             { key: 'bg', label: '侧栏背景' },
             { key: 'text', label: '主文字' },
@@ -832,10 +828,8 @@ function findPlayers() {
                 </div>
             `;
         }
-
         const posLeftActive = c.position === 'left';
         const posRightActive = c.position === 'right';
-
         const themeActive = c.theme;
         const themeButtons = `
             <div style="display:flex;gap:4px;">
@@ -844,13 +838,18 @@ function findPlayers() {
                 <button data-theme="system" style="flex:1;padding:4px 6px;border-radius:3px;border:1px solid ${themeActive === 'system' ? '#66aadd' : colors.border};background:${themeActive === 'system' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${themeActive === 'system' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;line-height:1.4;">系统</button>
             </div>
         `;
-
         const fontSizeOptions = [8,9,10,11,12,13,14,15,16,17,18,19,20];
         let fontSizeHTML = '';
         for (const size of fontSizeOptions) {
             const selected = c.baseFontSize == size ? 'selected' : '';
             fontSizeHTML += `<option value="${size}" ${selected}>${size}px</option>`;
         }
+        const opMode = c.operationMode || 'quick';
+        const showPreview = c.showPreview || false;
+        const showCommonGray = c.showCommonGray || false;
+        const showIndependentGray = c.showIndependentGray || false;
+        const previewOpacity = c.previewOpacity || 0.9;
+        const previewSize = c.previewSize || 'medium';
 
         return `
             <div style="margin-bottom:16px;">
@@ -883,7 +882,16 @@ function findPlayers() {
                     </div>
                 </div>
             </div>
-
+            <div style="margin-bottom:16px;">
+                <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">操作模式</h3>
+                <div style="display:flex;gap:4px;">
+                    <button data-mode="quick" style="flex:1;padding:6px 8px;border-radius:4px;border:1px solid ${opMode === 'quick' ? '#66aadd' : colors.border};background:${opMode === 'quick' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${opMode === 'quick' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;line-height:1.4;">🔄 右键切换视角</button>
+                    <button data-mode="menu" style="flex:1;padding:6px 8px;border-radius:4px;border:1px solid ${opMode === 'menu' ? '#66aadd' : colors.border};background:${opMode === 'menu' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${opMode === 'menu' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;line-height:1.4;">📋 右键菜单操作</button>
+                </div>
+                <div style="font-size:11px;color:${colors.textSecondary};margin-top:4px;">
+                    ${opMode === 'quick' ? '当前模式：右键点击玩家切换视角' : '当前模式：右键点击玩家弹出操作菜单'}
+                </div>
+            </div>
             <div style="margin-bottom:16px;">
                 <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">死亡玩家</h3>
                 <div>
@@ -895,7 +903,6 @@ function findPlayers() {
                     </div>
                 </div>
             </div>
-
             <div style="margin-bottom:16px;">
                 <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">职业颜色</h3>
                 <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
@@ -905,7 +912,39 @@ function findPlayers() {
                     ${jobColorRows}
                 </div>
             </div>
-
+            <div style="margin-bottom:16px;">
+                <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">导出预览</h3>
+                <div>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:${colors.textSecondary};cursor:pointer;">
+                        <input type="checkbox" data-setting="showPreview" ${showPreview ? 'checked' : ''}>
+                        启用预览窗口
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:${colors.textSecondary};cursor:pointer;margin-top:4px;">
+                        <input type="checkbox" data-setting="showCommonGray" ${showCommonGray ? 'checked' : ''}>
+                        显示共灰区
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:${colors.textSecondary};cursor:pointer;margin-top:4px;">
+                        <input type="checkbox" data-setting="showIndependentGray" ${showIndependentGray ? 'checked' : ''}>
+                        显示独立灰区
+                    </label>
+                    <div style="margin-top:8px;">
+                        <label style="font-size:12px;color:${colors.textSecondary};display:block;margin-bottom:2px;">
+                            预览窗口大小
+                        </label>
+                        <select data-setting="previewSize" style="width:100%;padding:4px 6px;border-radius:3px;border:1px solid ${colors.border};background:${colors.bg};color:${colors.text};font-size:12px;">
+                            <option value="small" ${previewSize === 'small' ? 'selected' : ''}>小 (500×200)</option>
+                            <option value="medium" ${previewSize === 'medium' ? 'selected' : ''}>中 (700×300)</option>
+                            <option value="large" ${previewSize === 'large' ? 'selected' : ''}>大 (900×400)</option>
+                        </select>
+                    </div>
+                    <div style="margin-top:8px;">
+                        <label style="font-size:12px;color:${colors.textSecondary};display:block;margin-bottom:2px;">
+                            不透明度：${Math.round(previewOpacity * 100)}%
+                        </label>
+                        <input type="range" data-setting="previewOpacity" min="0.3" max="1" step="0.05" value="${previewOpacity}" style="width:100%;">
+                    </div>
+                </div>
+            </div>
             <div>
                 <h3 style="font-size:13px;margin:0 0 8px 0;color:${colors.text};border-bottom:1px solid ${colors.divider};padding-bottom:4px;">界面颜色</h3>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;">
@@ -946,7 +985,6 @@ function findPlayers() {
     function bindSettingsEvents() {
         const modal = document.getElementById('werewolf-settings-modal');
         if (!modal) return;
-
         modal.querySelectorAll('[data-theme]').forEach(el => {
             el.addEventListener('click', () => {
                 pendingSettings.theme = el.dataset.theme;
@@ -957,7 +995,20 @@ function findPlayers() {
                 previewSettings();
             });
         });
-
+        modal.querySelectorAll('[data-mode]').forEach(el => {
+            el.addEventListener('click', () => {
+                pendingSettings.operationMode = el.dataset.mode;
+                isSettingsDirty = true;
+                updateSettingsTitle();
+                renderSettingsBody();
+                bindSettingsEvents();
+                if (el.dataset.mode === 'menu') {
+                    currentPerspective = null;
+                    pendingSettings.perspective = null;
+                }
+                previewSettings();
+            });
+        });
         modal.querySelectorAll('[data-setting]').forEach(el => {
             const eventType = el.type === 'checkbox' ? 'change' : 'input';
             el.addEventListener(eventType, () => {
@@ -979,16 +1030,28 @@ function findPlayers() {
                 isSettingsDirty = true;
                 updateSettingsTitle();
                 previewSettings();
-
                 if (el.type === 'range') {
                     const label = el.closest('div')?.querySelector('label');
-                    if (label) {
+                    if (label && key === 'deathOpacity') {
                         label.textContent = `文字透明度：${(value * 100).toFixed(0)}%`;
+                    }
+                    if (label && key === 'previewOpacity') {
+                        label.textContent = `不透明度：${Math.round(value * 100)}%`;
+                    }
+                }
+                if (['showPreview', 'showCommonGray', 'showIndependentGray', 'previewSize', 'previewOpacity'].includes(key)) {
+                    if (key === 'showPreview') {
+                        if (value) {
+                            try { createPreviewWindow(); } catch(e) {}
+                        } else {
+                            try { closePreviewWindow(); } catch(e) {}
+                        }
+                    } else {
+                        try { updatePreviewWindow(); } catch(e) {}
                     }
                 }
             });
         });
-
         modal.querySelectorAll('[data-position]').forEach(el => {
             el.addEventListener('click', () => {
                 pendingSettings.position = el.dataset.position;
@@ -999,7 +1062,6 @@ function findPlayers() {
                 previewSettings();
             });
         });
-
         modal.querySelectorAll('[data-preset]').forEach(el => {
             el.addEventListener('click', () => {
                 pendingSettings.jobColorPreset = el.dataset.preset;
@@ -1010,7 +1072,6 @@ function findPlayers() {
                 previewSettings();
             });
         });
-
         modal.querySelectorAll('[data-color-key]').forEach(el => {
             el.addEventListener('input', () => {
                 const key = el.dataset.colorKey;
@@ -1021,7 +1082,6 @@ function findPlayers() {
                 previewSettings();
             });
         });
-
         modal.querySelectorAll('[data-job-color]').forEach(el => {
             el.addEventListener('input', () => {
                 if (pendingSettings.jobColorPreset !== 'custom') {
@@ -1037,7 +1097,6 @@ function findPlayers() {
                 previewSettings();
             });
         });
-
         modal.querySelectorAll('[data-job-reset]').forEach(el => {
             el.addEventListener('click', () => {
                 const job = el.dataset.jobReset;
@@ -1072,10 +1131,635 @@ function findPlayers() {
             pendingSettings.deathOpacity = settings.deathOpacity || 0.5;
         }
         applySettingsToSidebar(pendingSettings);
+        // 预览窗口自动刷新
+        const container = document.getElementById('werewolf-preview-container');
+        if (container && container.style.display !== 'none') {
+            updatePreviewWindow();
+        }
     }
 
     // ============================================================
-    // 12. UI 创建
+    // 12. 灰区计算（修复：正确遍历两层数据结构）
+    // ============================================================
+
+    function calculateGrayZones() {
+        const allPlayers = cachedPlayers;
+        if (allPlayers.length === 0) return { commonGray: [], independentGray: {} };
+
+        const storeData = store.get();
+        const identities = storeData.identity || {};
+        const actionData = storeData.action || {};
+        const deadPlayerIds = new Set();
+
+        for (const p of allPlayers) {
+            if (p.isDead) deadPlayerIds.add(p.id);
+        }
+
+        // 遍历所有视角，收集所有被声明为职业的玩家（非村人）
+        const claimedPlayerIds = new Set();
+        for (const perspectiveId in identities) {
+            const perspectiveData = identities[perspectiveId];
+            for (const pid in perspectiveData) {
+                const job = perspectiveData[pid];
+                if (job && job !== '村人') {
+                    claimedPlayerIds.add(pid);
+                }
+            }
+        }
+
+        // 遍历所有视角查找玩家职业
+        function getPlayerJob(pid) {
+            for (const perspectiveId in identities) {
+                const perspectiveData = identities[perspectiveId];
+                if (perspectiveData[pid] && perspectiveData[pid] !== '村人') {
+                    return perspectiveData[pid];
+                }
+            }
+            return null;
+        }
+
+        // 只统计占卜师的占卜记录
+        const divineRecords = {};
+        for (const operatorId in actionData) {
+            const data = actionData[operatorId];
+            if (!data || !data.targets || data.targets.length === 0) continue;
+
+            const operatorJob = getPlayerJob(operatorId);
+            if (operatorJob !== '占卜师') continue;
+
+            divineRecords[operatorId] = data.targets.map(t => t.target);
+        }
+
+        const commonGray = [];
+        for (const p of allPlayers) {
+            if (claimedPlayerIds.has(p.id)) continue;
+            if (deadPlayerIds.has(p.id)) continue;
+            let isDivined = false;
+            for (const operatorId in divineRecords) {
+                if (divineRecords[operatorId].includes(p.name)) {
+                    isDivined = true;
+                    break;
+                }
+            }
+            if (!isDivined) commonGray.push(p.name);
+        }
+
+        const independentGray = {};
+        for (const operatorId in divineRecords) {
+            const targets = divineRecords[operatorId];
+            const gray = [];
+            for (const p of allPlayers) {
+                if (claimedPlayerIds.has(p.id)) continue;
+                if (deadPlayerIds.has(p.id)) continue;
+                if (!targets.includes(p.name)) {
+                    gray.push(p.name);
+                }
+            }
+            independentGray[operatorId] = gray;
+        }
+
+        return { commonGray, independentGray };
+    }
+
+    // ============================================================
+    // 13. 导出功能
+    // ============================================================
+
+    function buildExportBlocks(settingsOverride) {
+        const s = settingsOverride || settings;
+        const blocks = [];
+
+        if (!cachedPlayers || cachedPlayers.length === 0) {
+            blocks.push({
+                id: 'block_empty',
+                type: 'job',
+                content: '暂无玩家数据，请点击「读取」刷新',
+                editable: false
+            });
+            return blocks;
+        }
+
+        let jobOrder = cachedJobList || [];
+        if (jobOrder.length === 0) {
+            jobOrder = ['占卜师', '灵能者', '人狼', '狂人', '妖狐', '猎人', '共有者', '村人'];
+        }
+        jobOrder = jobOrder.filter(j => j !== '村人');
+
+        const storeData = store.get();
+        const identities = storeData.identity || {};
+        const actionData = storeData.action || {};
+        const grayZones = calculateGrayZones();
+
+        let counter = 0;
+        const groups = {};
+
+        const globalIdentities = identities['global'] || {};
+
+        for (const pid in globalIdentities) {
+            const job = globalIdentities[pid];
+            if (!job || job === '村人') continue;
+            if (!groups[job]) groups[job] = [];
+
+            const player = cachedPlayers.find(p => p.id === pid);
+            if (!player) continue;
+
+            const action = actionData[pid] || {};
+            const chain = [];
+            if (action.targets) {
+                for (const entry of action.targets) {
+                    chain.push(entry.target + entry.symbol);
+                }
+            }
+            if (action.death) {
+                chain.push(action.death);
+            }
+            groups[job].push({ name: player.name, chain: chain.join('→'), id: pid });
+        }
+
+        // 先处理占卜师（带独立灰区）
+        const divineJob = '占卜师';
+        if (groups[divineJob] && groups[divineJob].length > 0) {
+            blocks.push({
+                id: 'block_job_' + counter++,
+                type: 'job',
+                content: divineJob + '（' + groups[divineJob].length + '）',
+                editable: false
+            });
+            blocks.push({
+                id: 'block_sep_' + counter++,
+                type: 'separator',
+                content: '\n',
+                editable: true
+            });
+
+            for (const item of groups[divineJob]) {
+                blocks.push({
+                    id: 'block_player_' + counter++,
+                    type: 'player',
+                    content: item.name,
+                    editable: false
+                });
+                blocks.push({
+                    id: 'block_symbol_' + counter++,
+                    type: 'symbol',
+                    content: '：',
+                    editable: false
+                });
+                if (item.chain) {
+                    blocks.push({
+                        id: 'block_symbol_' + counter++,
+                        type: 'symbol',
+                        content: item.chain,
+                        editable: false
+                    });
+                }
+                blocks.push({
+                    id: 'block_sep_' + counter++,
+                    type: 'separator',
+                    content: '\n',
+                    editable: true
+                });
+
+                // 每个占卜师后面跟独立灰区
+                if (s.showIndependentGray) {
+                    const opId = item.id;
+                    if (opId && grayZones.independentGray[opId]?.length > 0) {
+                        const grayList = grayZones.independentGray[opId];
+                        blocks.push({
+                            id: 'block_gray_' + counter++,
+                            type: 'gray',
+                            content: '灰区：' + grayList.join('，'),
+                            editable: false
+                        });
+                        blocks.push({
+                            id: 'block_sep_' + counter++,
+                            type: 'separator',
+                            content: '\n',
+                            editable: true
+                        });
+                    }
+                }
+            }
+
+            blocks.push({
+                id: 'block_sep_' + counter++,
+                type: 'separator',
+                content: '\n',
+                editable: true
+            });
+        }
+
+        // 所有占卜师之后，其他职业之前，显示共灰区
+        if (s.showCommonGray && grayZones.commonGray.length > 0) {
+            blocks.push({
+                id: 'block_job_' + counter++,
+                type: 'job',
+                content: '共灰：',
+                editable: false
+            });
+            blocks.push({
+                id: 'block_sep_' + counter++,
+                type: 'separator',
+                content: '\n',
+                editable: true
+            });
+            blocks.push({
+                id: 'block_gray_' + counter++,
+                type: 'gray',
+                content: grayZones.commonGray.join('，'),
+                editable: false
+            });
+            blocks.push({
+                id: 'block_sep_' + counter++,
+                type: 'separator',
+                content: '\n',
+                editable: true
+            });
+            // 共灰后额外空行分隔
+            blocks.push({
+                id: 'block_sep_' + counter++,
+                type: 'separator',
+                content: '\n',
+                editable: true
+            });
+        }
+
+        // 处理其他职业（除占卜师外）
+        for (const job of jobOrder) {
+            if (job === divineJob) continue;
+            if (!groups[job] || groups[job].length === 0) continue;
+
+            blocks.push({
+                id: 'block_job_' + counter++,
+                type: 'job',
+                content: job + '（' + groups[job].length + '）',
+                editable: false
+            });
+            blocks.push({
+                id: 'block_sep_' + counter++,
+                type: 'separator',
+                content: '\n',
+                editable: true
+            });
+
+            for (const item of groups[job]) {
+                blocks.push({
+                    id: 'block_player_' + counter++,
+                    type: 'player',
+                    content: item.name,
+                    editable: false
+                });
+                blocks.push({
+                    id: 'block_symbol_' + counter++,
+                    type: 'symbol',
+                    content: '：',
+                    editable: false
+                });
+                if (item.chain) {
+                    blocks.push({
+                        id: 'block_symbol_' + counter++,
+                        type: 'symbol',
+                        content: item.chain,
+                        editable: false
+                    });
+                }
+                blocks.push({
+                    id: 'block_sep_' + counter++,
+                    type: 'separator',
+                    content: '\n',
+                    editable: true
+                });
+            }
+
+            blocks.push({
+                id: 'block_sep_' + counter++,
+                type: 'separator',
+                content: '\n',
+                editable: true
+            });
+        }
+
+        return blocks;
+    }
+
+    function parseChainParts(chain) {
+        const parts = [];
+        let i = 0;
+        while (i < chain.length) {
+            if (chain[i] === '×') {
+                let end = i + 1;
+                while (end < chain.length && chain[end] !== '→') end++;
+                parts.push(chain.substring(i, end));
+                i = end;
+                if (i < chain.length && chain[i] === '→') {
+                    parts.push('→');
+                    i++;
+                }
+                continue;
+            }
+            let end = i;
+            while (end < chain.length && chain[end] !== '○' && chain[end] !== '●' && chain[end] !== '→') {
+                end++;
+            }
+            if (end > i) {
+                parts.push(chain.substring(i, end));
+                i = end;
+            }
+            if (i < chain.length && (chain[i] === '○' || chain[i] === '●')) {
+                parts.push(chain[i]);
+                i++;
+            }
+            if (i < chain.length && chain[i] === '→') {
+                parts.push('→');
+                i++;
+            }
+        }
+        return parts;
+    }
+
+    function blocksToText(blocks) {
+        let text = '';
+        for (const block of blocks) {
+            if (block.type === 'separator') {
+                text += block.content;
+            } else {
+                text += block.content;
+            }
+        }
+        return text;
+    }
+
+    function createPreviewWindow() {
+        if (document.getElementById('werewolf-preview-container')) {
+            togglePreviewWindow();
+            return;
+        }
+
+        const s = settings;
+        const opacity = s.previewOpacity || 0.9;
+        const size = s.previewSize || 'medium';
+        const sizeMap = {
+            small: { width: '500px', height: '200px' },
+            medium: { width: '700px', height: '300px' },
+            large: { width: '900px', height: '400px' }
+        };
+        const dims = sizeMap[size] || sizeMap.medium;
+        const pos = s.previewPosition || { x: null, y: null };
+
+        const container = document.createElement('div');
+        container.id = 'werewolf-preview-container';
+        const left = pos.x !== null ? `${pos.x}px` : '50%';
+        const top = pos.y !== null ? `${pos.y}px` : 'auto';
+        const transform = pos.x === null ? 'translateX(-50%)' : 'none';
+        const bottom = pos.y === null ? '0' : 'auto';
+
+        container.style.cssText = `
+            position: fixed;
+            bottom: ${bottom};
+            left: ${left};
+            top: ${top};
+            transform: ${transform};
+            width: ${dims.width};
+            height: ${dims.height};
+            background: rgba(30, 30, 40, ${opacity});
+            border: 2px solid #4a4a6a;
+            border-radius: 8px 8px 0 0;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
+            font-family: 'Microsoft YaHei', sans-serif;
+            resize: both;
+            overflow: hidden;
+            min-width: 300px;
+            min-height: 150px;
+            max-width: 95vw;
+            max-height: 80vh;
+        `;
+
+        const titleBar = document.createElement('div');
+        titleBar.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 10px;
+            background: rgba(50, 50, 70, 0.8);
+            border-bottom: 1px solid #4a4a6a;
+            flex-shrink: 0;
+            cursor: move;
+            user-select: none;
+        `;
+        titleBar.innerHTML = `
+            <span style="font-size:12px;color:#a0a0b0;font-weight:bold;">📋 导出预览</span>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <button id="preview-copy-btn" style="padding:1px 8px;border-radius:3px;border:1px solid #4a6a8a;background:#2a3a5a;color:#a0a0b0;cursor:pointer;font-size:10px;">复制</button>
+                <button id="preview-refresh-btn" style="padding:1px 8px;border-radius:3px;border:1px solid #4a8a5a;background:#2a5a3a;color:#a0a0b0;cursor:pointer;font-size:10px;">刷新</button>
+                <button id="preview-close-btn" style="padding:1px 8px;border-radius:3px;border:1px solid #8a4a4a;background:#5a2a2a;color:#a0a0b0;cursor:pointer;font-size:10px;">×</button>
+            </div>
+        `;
+        container.appendChild(titleBar);
+
+        const editor = document.createElement('div');
+        editor.id = 'preview-editor';
+        editor.contentEditable = true;
+        editor.style.cssText = `
+            flex: 1;
+            overflow: auto;
+            padding: 8px 12px;
+            font-family: 'Consolas', 'Microsoft YaHei', monospace;
+            font-size: 12px;
+            line-height: 1.8;
+            color: #e0e0e0;
+            outline: none;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: transparent;
+            user-select: text;
+        `;
+        container.appendChild(editor);
+
+        document.body.appendChild(container);
+        previewWindow = container;
+
+        document.getElementById('preview-close-btn').addEventListener('click', () => {
+            container.style.display = 'none';
+            const s = getSettings();
+            s.showPreview = false;
+            saveSettings(s);
+        });
+
+        document.getElementById('preview-copy-btn').addEventListener('click', () => {
+            const text = editor.innerText;
+            navigator.clipboard.writeText(text).then(
+                () => showToast('已复制', 1200),
+                () => {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.cssText = 'position:fixed;left:-9999px;';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    ta.remove();
+                    showToast('已复制', 1200);
+                }
+            );
+        });
+
+        document.getElementById('preview-refresh-btn').addEventListener('click', () => {
+            updatePreviewWindow();
+            showToast('已刷新', 800);
+        });
+
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+
+        titleBar.addEventListener('mousedown', (e) => {
+            if (e.target.closest('button')) return;
+            isDragging = true;
+            const rect = container.getBoundingClientRect();
+            dragOffset.x = e.clientX - rect.left;
+            dragOffset.y = e.clientY - rect.top;
+            container.style.cursor = 'grabbing';
+            container.style.left = 'auto';
+            container.style.right = 'auto';
+            container.style.transform = 'none';
+            container.style.top = (rect.top || 0) + 'px';
+            container.style.bottom = 'auto';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const x = Math.max(0, e.clientX - dragOffset.x);
+            const y = Math.max(0, e.clientY - dragOffset.y);
+            container.style.left = x + 'px';
+            container.style.top = y + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                container.style.cursor = 'default';
+                const rect = container.getBoundingClientRect();
+                const s = getSettings();
+                s.previewPosition = { x: rect.left, y: rect.top };
+                saveSettings(s);
+            }
+        });
+
+        // 延迟更新确保 DOM 渲染完成
+        setTimeout(() => {
+            updatePreviewWindow();
+        }, 50);
+    }
+
+    function togglePreviewWindow() {
+        const container = document.getElementById('werewolf-preview-container');
+        if (container) {
+            if (container.style.display === 'none') {
+                container.style.display = 'flex';
+                setTimeout(() => updatePreviewWindow(), 50);
+            } else {
+                container.style.display = 'none';
+            }
+            return;
+        }
+        createPreviewWindow();
+    }
+
+    function closePreviewWindow() {
+        const container = document.getElementById('werewolf-preview-container');
+        if (container) container.remove();
+        previewWindow = null;
+    }
+
+    function updatePreviewWindow() {
+        const editor = document.getElementById('preview-editor');
+        if (!editor) return;
+
+        const s = getSettings();
+        const newBlocks = buildExportBlocks(s);
+
+        // 保存当前可编辑块的内容
+        const editableContents = {};
+        const spans = editor.querySelectorAll('span[contenteditable="true"]');
+        for (const span of spans) {
+            editableContents[span.dataset.blockId] = span.textContent;
+        }
+
+        editor.innerHTML = '';
+
+        for (const block of newBlocks) {
+            if (block.type === 'separator') {
+                if (block.content === '\n') {
+                    editor.appendChild(document.createElement('br'));
+                } else {
+                    editor.appendChild(document.createTextNode(block.content));
+                }
+                continue;
+            }
+
+            const span = document.createElement('span');
+            // 保留用户编辑的内容
+            if (editableContents[block.id] !== undefined && block.editable) {
+                span.textContent = editableContents[block.id];
+            } else {
+                span.textContent = block.content;
+            }
+            span.contentEditable = block.editable ? 'true' : 'false';
+            span.dataset.blockId = block.id;
+            span.dataset.blockType = block.type;
+            span.dataset.originalContent = block.content;
+
+            if (!block.editable) {
+                span.style.cssText = `
+                    background: rgba(60, 60, 80, 0.25);
+                    border-radius: 2px;
+                    padding: 0 2px;
+                    cursor: default;
+                `;
+            }
+
+            editor.appendChild(span);
+        }
+
+        previewBlocks = newBlocks;
+    }
+
+    function exportToClipboard() {
+        const s = getSettings();
+        const blocks = buildExportBlocks(s);
+        const text = blocksToText(blocks);
+
+        if (!text.trim()) {
+            showToast('暂无数据', 1500);
+            return false;
+        }
+
+        navigator.clipboard.writeText(text).then(
+            () => { showToast('已复制', 1200); },
+            () => {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.cssText = 'position:fixed;left:-9999px;';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                ta.remove();
+                showToast('已复制', 1200);
+            }
+        );
+        return true;
+    }
+
+    function getExportText() {
+        const s = getSettings();
+        const blocks = buildExportBlocks(s);
+        return blocksToText(blocks);
+    }
+
+    // ============================================================
+    // 14. UI 创建
     // ============================================================
 
     function createSidebar() {
@@ -1151,7 +1835,34 @@ function findPlayers() {
         const exportBtn = document.createElement('button');
         exportBtn.textContent = '导出';
         exportBtn.style.cssText = btnStyle + 'background:#2a3a5a;border-color:#4a6a8a;';
-        exportBtn.addEventListener('click', exportTable);
+
+        exportBtn.addEventListener('click', (e) => {
+            if (e.button === 0) {
+                const text = getExportText();
+                if (text && text.trim()) {
+                    navigator.clipboard.writeText(text).then(
+                        () => showToast('已复制', 1200),
+                        () => {
+                            const ta = document.createElement('textarea');
+                            ta.value = text;
+                            ta.style.cssText = 'position:fixed;left:-9999px;';
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            ta.remove();
+                            showToast('已复制', 1200);
+                        }
+                    );
+                } else {
+                    showToast('暂无数据', 1500);
+                }
+            }
+        });
+
+        exportBtn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            showExportContextMenu(e.clientX, e.clientY);
+        });
 
         const resetBtn = document.createElement('button');
         resetBtn.textContent = '重置';
@@ -1164,6 +1875,7 @@ function findPlayers() {
             updateIndicator();
             renderPlayerList([]);
             showToast('已重置', 1500);
+            closePreviewWindow();
         });
 
         const settingsBtn = document.createElement('button');
@@ -1228,7 +1940,87 @@ function findPlayers() {
     }
 
     // ============================================================
-    // 13. 收起/展开
+    // 15. 导出右键菜单
+    // ============================================================
+
+    function showExportContextMenu(x, y) {
+        const existing = document.getElementById('export-context-menu');
+        if (existing) existing.remove();
+
+        const s = getSettings();
+        const menu = document.createElement('div');
+        menu.id = 'export-context-menu';
+        menu.style.cssText = `
+            position: fixed;
+            left: ${x}px;
+            top: ${y}px;
+            background: #2a2a3a;
+            border: 1px solid #4a4a6a;
+            border-radius: 4px;
+            padding: 4px 0;
+            z-index: 10001;
+            min-width: 160px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            font-family: 'Microsoft YaHei', sans-serif;
+            font-size: 12px;
+        `;
+
+        const items = [
+            { label: `${s.showPreview ? '☑' : '☐'} 显示预览`, key: 'showPreview' },
+            { label: `${s.showCommonGray ? '☑' : '☐'} 显示共灰区`, key: 'showCommonGray' },
+            { label: `${s.showIndependentGray ? '☑' : '☐'} 显示独立灰区`, key: 'showIndependentGray' }
+        ];
+
+        for (const item of items) {
+            const div = document.createElement('div');
+            div.textContent = item.label;
+            div.style.cssText = `
+                padding: 5px 14px;
+                cursor: pointer;
+                color: #e0e0e0;
+                font-size: 12px;
+                transition: background 0.1s;
+            `;
+            div.addEventListener('mouseenter', () => {
+                div.style.background = 'rgba(100,200,255,0.1)';
+            });
+            div.addEventListener('mouseleave', () => {
+                div.style.background = 'transparent';
+            });
+            div.addEventListener('click', () => {
+                const current = getSettings();
+                current[item.key] = !current[item.key];
+                saveSettings(current);
+                settings = getSettings();
+
+                if (item.key === 'showPreview') {
+                    if (settings.showPreview) {
+                        try { createPreviewWindow(); } catch(e) {}
+                    } else {
+                        try { closePreviewWindow(); } catch(e) {}
+                    }
+                } else {
+                    try { updatePreviewWindow(); } catch(e) {}
+                }
+                menu.remove();
+                showToast(`${item.label.replace(/[☑☐]\s/, '')} ${settings[item.key] ? '已开启' : '已关闭'}`, 800);
+            });
+            menu.appendChild(div);
+        }
+
+        document.body.appendChild(menu);
+
+        setTimeout(() => {
+            document.addEventListener('click', () => {
+                if (document.getElementById('export-context-menu')) {
+                    menu.remove();
+                }
+            }, { once: true });
+        }, 10);
+    }
+
+    // ============================================================
+    // 16. 收起/展开
     // ============================================================
 
     function toggleSidebar() {
@@ -1292,13 +2084,19 @@ function findPlayers() {
     }
 
     // ============================================================
-    // 14. 更新指示器
+    // 17. 更新指示器
     // ============================================================
 
     function updateIndicator() {
         const ind = document.getElementById('perspective-indicator');
         if (!ind) return;
         const themeColors = getThemeColors(settings);
+        const opMode = settings.operationMode || 'quick';
+        if (opMode === 'menu') {
+            ind.textContent = '菜单模式';
+            ind.style.color = '#66ddff';
+            return;
+        }
         if (currentPerspective) {
             const p = cachedPlayers.find(x => x.id === currentPerspective);
             ind.textContent = `视角 ${p ? p.name : currentPerspective}`;
@@ -1310,7 +2108,7 @@ function findPlayers() {
     }
 
     // ============================================================
-    // 15. 刷新
+    // 18. 刷新
     // ============================================================
 
     function refreshAll() {
@@ -1323,6 +2121,11 @@ function findPlayers() {
             cachedPlayers = players;
             updateIndicator();
             renderPlayerList(players);
+            try {
+                if (document.getElementById('werewolf-preview-container')) {
+                    updatePreviewWindow();
+                }
+            } catch(e) {}
         } else {
             cachedPlayers = [];
             const list = document.getElementById('werewolf-player-list');
@@ -1331,7 +2134,7 @@ function findPlayers() {
     }
 
     // ============================================================
-    // 16. 渲染玩家列表
+    // 19. 渲染玩家列表
     // ============================================================
 
     function renderPlayerList(players, settingsOverride) {
@@ -1345,38 +2148,104 @@ function findPlayers() {
         const activeSettings = settingsOverride || settings;
         const fontSize = Number(activeSettings.baseFontSize) || 11;
         const deathOpacity = Number(activeSettings.deathOpacity) || 0.5;
-
+        const opMode = activeSettings.operationMode || 'quick';
         const containerHeight = container.clientHeight || 300;
         const lineHeight = calcLineHeight(players.length, fontSize, containerHeight);
 
         const frag = document.createDocumentFragment();
         const data = store.get();
+        if (!data.identity) data.identity = {};
+        if (!data.action) data.action = {};
         const theme = getCurrentTheme(activeSettings);
         const themeColors = getThemeColors(activeSettings);
-
         const dividerColor = theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
         const MARK_COLOR = themeColors.mark || '#ffaa66';
         const VIEW_COLOR = themeColors.view || '#66ddff';
 
         let targetMarkMap = {};
-        if (currentPerspective === null) {
+        if (opMode === 'menu') {
+            for (const operatorId in data.action) {
+                const actionData = data.action[operatorId];
+                if (!actionData) continue;
+
+                if (actionData.targets) {
+                    for (const entry of actionData.targets) {
+                        if (!targetMarkMap[entry.target]) {
+                            targetMarkMap[entry.target] = [];
+                        }
+                        const existing = targetMarkMap[entry.target].find(
+                            m => m.operator === operatorId && !m.isDeath
+                        );
+                        if (existing) {
+                            existing.symbol = entry.symbol;
+                        } else {
+                            targetMarkMap[entry.target].push({
+                                operator: operatorId,
+                                symbol: entry.symbol,
+                                isDeath: false
+                            });
+                        }
+                    }
+                }
+
+                if (actionData.death) {
+                    const opPlayer = cachedPlayers.find(p => p.id === operatorId);
+                    if (opPlayer) {
+                        const targetName = opPlayer.name;
+                        if (!targetMarkMap[targetName]) {
+                            targetMarkMap[targetName] = [];
+                        }
+                        const existing = targetMarkMap[targetName].find(
+                            m => m.operator === operatorId && m.isDeath
+                        );
+                        if (existing) {
+                            existing.symbol = actionData.death;
+                        } else {
+                            targetMarkMap[targetName].push({
+                                operator: operatorId,
+                                symbol: actionData.death,
+                                isDeath: true
+                            });
+                        }
+                    }
+                }
+            }
+        } else if (currentPerspective === null) {
             for (const perspective in data.action) {
-                for (const targetName in data.action[perspective]) {
-                    targetMarkMap[targetName] = data.action[perspective][targetName];
+                const actionData = data.action[perspective];
+                if (!actionData || !actionData.targets) continue;
+                for (const entry of actionData.targets) {
+                    targetMarkMap[entry.target] = entry.symbol;
                 }
             }
         } else {
-            const actionMap = data.action[currentPerspective] || {};
-            for (const targetName in actionMap) {
-                targetMarkMap[targetName] = actionMap[targetName];
+            const actionData = data.action[currentPerspective];
+            if (actionData) {
+                if (actionData.targets) {
+                    for (const entry of actionData.targets) {
+                        targetMarkMap[entry.target] = entry.symbol;
+                    }
+                }
+                if (actionData.death) {
+                    targetMarkMap['自己'] = actionData.death;
+                }
             }
+        }
+
+        function getOperatorHistory(operatorId) {
+            const actionData = data.action[operatorId];
+            if (!actionData || !actionData.targets) return [];
+            return actionData.targets;
         }
 
         players.forEach((player, index) => {
             const isSelf = (currentPerspective === player.id);
+            const opModeMenu = (opMode === 'menu');
 
             let identity = null;
-            if (currentPerspective === null) {
+            if (opModeMenu) {
+                identity = store.getIdentity('global', player.id);
+            } else if (currentPerspective === null) {
                 identity = store.getIdentity('global', player.id);
             } else {
                 identity = store.getIdentity(currentPerspective, player.id);
@@ -1387,10 +2256,24 @@ function findPlayers() {
             const color = identity ? getJobColor(identity, activeSettings) : '#888';
 
             let markSymbol = null;
-            if (isSelf && currentPerspective !== null && targetMarkMap['自己']) {
+            let markCount = null;
+
+            if (opModeMenu) {
+                const marks = targetMarkMap[player.name] || [];
+                if (marks.length > 0) {
+                    markSymbol = marks.map(m => m.symbol).join('');
+                }
+            } else if (isSelf && currentPerspective !== null && targetMarkMap['自己']) {
                 markSymbol = targetMarkMap['自己'];
-            } else {
-                markSymbol = targetMarkMap[player.name] || null;
+            } else if (targetMarkMap[player.name]) {
+                markSymbol = targetMarkMap[player.name];
+                if (currentPerspective !== null && !opModeMenu) {
+                    const history = getOperatorHistory(currentPerspective);
+                    const idx = history.findIndex(e => e.target === player.name);
+                    if (idx !== -1) {
+                        markCount = idx + 1;
+                    }
+                }
             }
 
             const item = document.createElement('div');
@@ -1418,19 +2301,31 @@ function findPlayers() {
                 line-height:${lineHeight}px;
             `;
 
-            if (currentPerspective === null) {
+            let leftText = '';
+            if (opModeMenu) {
+                if (markSymbol) {
+                    leftText = markSymbol;
+                } else if (!identity) {
+                    leftText = '';
+                }
+            } else if (currentPerspective === null) {
                 if (!identity && markSymbol) {
-                    leftMark.textContent = '○';
+                    leftText = '○';
                 } else {
-                    leftMark.textContent = '';
+                    leftText = '';
                 }
             } else {
                 if (markSymbol) {
-                    leftMark.textContent = markSymbol;
+                    if (markCount !== null && markSymbol !== '×（处刑）' && markSymbol !== '×（袭击）') {
+                        leftText = markSymbol + markCount;
+                    } else {
+                        leftText = markSymbol;
+                    }
                 } else {
-                    leftMark.textContent = '';
+                    leftText = '';
                 }
             }
+            leftMark.textContent = leftText;
             item.appendChild(leftMark);
 
             const nameSpan = document.createElement('span');
@@ -1447,6 +2342,17 @@ function findPlayers() {
                 s.style.cssText = `font-size:${Math.max(fontSize - 2, 7)}px;color:${color};flex-shrink:0;font-weight:bold;line-height:${lineHeight}px;`;
                 s.textContent = identity;
                 item.appendChild(s);
+            } else if (opModeMenu) {
+                if (markSymbol) {
+                    const s = document.createElement('span');
+                    s.style.cssText = `
+                        font-size:${fontSize}px;flex-shrink:0;font-weight:900;
+                        color:${MARK_COLOR};line-height:${lineHeight}px;
+                        font-family:'Arial','Segoe UI Symbol',sans-serif;
+                    `;
+                    s.textContent = markSymbol;
+                    item.appendChild(s);
+                }
             } else if (currentPerspective === null && markSymbol) {
                 const s = document.createElement('span');
                 s.style.cssText = `
@@ -1463,11 +2369,15 @@ function findPlayers() {
                     color:${MARK_COLOR};line-height:${lineHeight}px;
                     font-family:'Arial','Segoe UI Symbol',sans-serif;
                 `;
-                s.textContent = markSymbol;
+                if (markCount !== null && markSymbol !== '×（处刑）' && markSymbol !== '×（袭击）') {
+                    s.textContent = markSymbol + markCount;
+                } else {
+                    s.textContent = markSymbol;
+                }
                 item.appendChild(s);
             }
 
-            if (isSelf) {
+            if (isSelf && !opModeMenu) {
                 const e = document.createElement('span');
                 e.textContent = 'V';
                 e.style.cssText = `font-size:${Math.max(fontSize - 2, 7)}px;flex-shrink:0;color:${VIEW_COLOR};line-height:${lineHeight}px;`;
@@ -1482,171 +2392,200 @@ function findPlayers() {
                 isLongPress = false;
             };
 
-            const onMouseDown = (e) => {
-                const btn = e.button;
-                if (btn === 0 || btn === 2) {
-                    isLongPress = false;
-                    clearLongPress();
-                    longPressTimer = setTimeout(() => {
-                        isLongPress = true;
-                        handleLongPress(e, btn);
-                    }, LONG_PRESS_DELAY);
-                }
-            };
-
-            const onMouseUp = (e) => {
-                const btn = e.button;
-                if (btn === 0 || btn === 2) {
-                    clearLongPress();
-                    if (isLongPress) {
-                        isLongPress = false;
-                        e.stopPropagation();
-                    }
-                }
-            };
-
-            const handleLongPress = (e, btn) => {
-                const id = item.dataset.playerId;
-                const targetName = item.dataset.playerName;
-
-                if (currentPerspective === null) {
-                    if (btn === 0) {
-                        store.setIdentity('global', id, null);
-                        renderPlayerList(cachedPlayers);
-                        showToast('已清空身份', 800);
-                    }
-                    return;
-                }
-
-                if (btn === 0) {
-                    store.setIdentity(currentPerspective, id, null);
-                    renderPlayerList(cachedPlayers);
-                    showToast('已清空身份', 800);
-                } else if (btn === 2) {
-                    store.setAction(currentPerspective, targetName, null);
-                    store.setIdentity(currentPerspective, id, null);
-                    renderPlayerList(cachedPlayers);
-                    showToast('已撤回 + 清空身份', 800);
-                }
-            };
-
-            item.addEventListener('click', (e) => {
-                if (isLongPress) {
+            if (opMode === 'menu') {
+                item.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
                     e.stopPropagation();
-                    return;
-                }
-                e.stopPropagation();
-                const id = item.dataset.playerId;
+                    const targetId = item.dataset.playerId;
+                    const targetName = item.dataset.playerName;
+                    showMode2ContextMenu(e.clientX, e.clientY, targetId, targetName);
+                });
 
-                let targetPerspective;
-                if (currentPerspective === null) {
-                    targetPerspective = 'global';
-                } else {
-                    targetPerspective = currentPerspective;
-                }
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const id = item.dataset.playerId;
+                    const currentJob = store.getIdentity('global', id);
+                    const nextJob = getNextJob(currentJob, 1);
+                    store.setIdentity('global', id, nextJob);
+                    renderPlayerList(cachedPlayers);
+                });
 
-                const currentJob = store.getIdentity(targetPerspective, id);
-                const nextJob = getNextJob(currentJob, 1);
-                store.setIdentity(targetPerspective, id, nextJob);
-                renderPlayerList(cachedPlayers);
-            });
-
-            item.addEventListener('wheel', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                const id = item.dataset.playerId;
-                const isGlobal = (currentPerspective === null);
-                const isSelfClick = (currentPerspective === id);
-
-                const direction = e.deltaY > 0 ? 1 : -1;
-
-                if (isGlobal) {
+                item.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const id = item.dataset.playerId;
+                    const direction = e.deltaY > 0 ? 1 : -1;
                     const currentJob = store.getIdentity('global', id);
                     const nextJob = getNextJob(currentJob, direction);
                     store.setIdentity('global', id, nextJob);
                     renderPlayerList(cachedPlayers);
-                    return;
-                }
+                });
 
-                const operatorId = currentPerspective;
-                let targetName;
-                if (isSelfClick) {
-                    targetName = '自己';
-                } else {
-                    targetName = item.dataset.playerName || '未知';
-                }
+            } else {
+                const onMouseDown = (e) => {
+                    const btn = e.button;
+                    if (btn === 0 || btn === 2) {
+                        isLongPress = false;
+                        clearLongPress();
+                        longPressTimer = setTimeout(() => {
+                            isLongPress = true;
+                            handleLongPress(e, btn);
+                        }, LONG_PRESS_DELAY);
+                    }
+                };
 
-                const currentSymbol = store.getActionTarget(operatorId, targetName);
+                const onMouseUp = (e) => {
+                    const btn = e.button;
+                    if (btn === 0 || btn === 2) {
+                        clearLongPress();
+                        if (isLongPress) {
+                            isLongPress = false;
+                            e.stopPropagation();
+                        }
+                    }
+                };
 
-                let nextSymbol;
-                if (isSelfClick) {
-                    nextSymbol = getNextResult(currentSymbol, direction);
-                } else {
-                    nextSymbol = getNextDivine(currentSymbol, direction);
-                }
+                const handleLongPress = (e, btn) => {
+                    const id = item.dataset.playerId;
+                    const targetName = item.dataset.playerName;
 
-                store.setAction(operatorId, targetName, nextSymbol);
-                renderPlayerList(cachedPlayers);
-            }, { passive: false });
+                    if (currentPerspective === null) {
+                        if (btn === 0) {
+                            store.setIdentity('global', id, null);
+                            renderPlayerList(cachedPlayers);
+                            showToast('已清空身份', 800);
+                        }
+                        return;
+                    }
 
-            item.addEventListener('contextmenu', (e) => {
-                if (isLongPress) {
+                    if (btn === 0) {
+                        store.setIdentity(currentPerspective, id, null);
+                        renderPlayerList(cachedPlayers);
+                        showToast('已清空身份', 800);
+                    } else if (btn === 2) {
+                        store.clearAction(currentPerspective);
+                        store.setIdentity(currentPerspective, id, null);
+                        renderPlayerList(cachedPlayers);
+                        showToast('已撤回 + 清空身份', 800);
+                    }
+                };
+
+                item.addEventListener('click', (e) => {
+                    if (isLongPress) {
+                        e.stopPropagation();
+                        return;
+                    }
+                    e.stopPropagation();
+                    const id = item.dataset.playerId;
+                    let targetPerspective;
+                    if (currentPerspective === null) {
+                        targetPerspective = 'global';
+                    } else {
+                        targetPerspective = currentPerspective;
+                    }
+                    const currentJob = store.getIdentity(targetPerspective, id);
+                    const nextJob = getNextJob(currentJob, 1);
+                    store.setIdentity(targetPerspective, id, nextJob);
+                    renderPlayerList(cachedPlayers);
+                });
+
+                item.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    return;
-                }
-                e.preventDefault();
-                e.stopPropagation();
-                const id = item.dataset.playerId;
+                    const id = item.dataset.playerId;
+                    const isGlobal = (currentPerspective === null);
+                    const isSelfClick = (currentPerspective === id);
+                    const direction = e.deltaY > 0 ? 1 : -1;
 
-                if (currentPerspective === id) {
-                    currentPerspective = null;
-                    settings.perspective = null;
+                    if (isGlobal) {
+                        const currentJob = store.getIdentity('global', id);
+                        const nextJob = getNextJob(currentJob, direction);
+                        store.setIdentity('global', id, nextJob);
+                        renderPlayerList(cachedPlayers);
+                        return;
+                    }
+
+                    const operatorId = currentPerspective;
+                    let targetName;
+                    if (isSelfClick) {
+                        targetName = '自己';
+                    } else {
+                        targetName = item.dataset.playerName || '未知';
+                    }
+
+                    const currentEntry = store.getAction(operatorId);
+                    let currentSymbol = null;
+                    if (currentEntry && currentEntry.targets) {
+                        const found = currentEntry.targets.find(t => t.target === targetName);
+                        if (found) currentSymbol = found.symbol;
+                    }
+                    if (targetName === '自己' && currentEntry && currentEntry.death) {
+                        currentSymbol = currentEntry.death;
+                    }
+
+                    let nextSymbol;
+                    if (isSelfClick) {
+                        nextSymbol = getNextResult(currentSymbol, direction);
+                    } else {
+                        nextSymbol = getNextDivine(currentSymbol, direction);
+                    }
+
+                    store.setAction(operatorId, targetName, nextSymbol);
+                    renderPlayerList(cachedPlayers);
+                }, { passive: false });
+
+                item.addEventListener('contextmenu', (e) => {
+                    if (isLongPress) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const id = item.dataset.playerId;
+
+                    if (currentPerspective === id) {
+                        currentPerspective = null;
+                        settings.perspective = null;
+                        saveSettings(settings);
+                        updateIndicator();
+                        renderPlayerList(cachedPlayers);
+                        return;
+                    }
+
+                    currentPerspective = id;
+                    settings.perspective = id;
                     saveSettings(settings);
                     updateIndicator();
                     renderPlayerList(cachedPlayers);
-                    return;
-                }
+                });
 
-                currentPerspective = id;
-                settings.perspective = id;
-                saveSettings(settings);
-                updateIndicator();
-                renderPlayerList(cachedPlayers);
-            });
+                item.addEventListener('auxclick', (e) => {
+                    if (e.button !== 1) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (currentPerspective === null) return;
+                    const operatorId = currentPerspective;
+                    const isSelfClick = (operatorId === item.dataset.playerId);
+                    let targetName;
+                    if (isSelfClick) {
+                        targetName = '自己';
+                    } else {
+                        targetName = item.dataset.playerName || '未知';
+                    }
+                    store.setAction(operatorId, targetName, null);
+                    renderPlayerList(cachedPlayers);
+                    showToast('已清空行动记录', 800);
+                });
 
-            item.addEventListener('auxclick', (e) => {
-                if (e.button !== 1) return;
-                e.preventDefault();
-                e.stopPropagation();
+                item.addEventListener('mousedown', onMouseDown);
+                item.addEventListener('mouseup', onMouseUp);
+                item.addEventListener('mouseleave', clearLongPress);
 
-                if (currentPerspective === null) {
-                    return;
-                }
-
-                const operatorId = currentPerspective;
-                const isSelfClick = (operatorId === item.dataset.playerId);
-
-                let targetName;
-                if (isSelfClick) {
-                    targetName = '自己';
-                } else {
-                    targetName = item.dataset.playerName || '未知';
-                }
-
-                store.setAction(operatorId, targetName, null);
-                renderPlayerList(cachedPlayers);
-                showToast('已清空行动记录', 800);
-            });
-
-            item.addEventListener('mousedown', onMouseDown);
-            item.addEventListener('mouseup', onMouseUp);
-            item.addEventListener('mouseleave', clearLongPress);
-
-            item.addEventListener('mousedown', (e) => {
-                if (e.button === 1) { e.preventDefault(); e.stopPropagation(); }
-            });
+                item.addEventListener('mousedown', (e) => {
+                    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); }
+                });
+            }
 
             item.addEventListener('mouseenter', () => {
                 const v = (currentPerspective === item.dataset.playerId);
@@ -1665,79 +2604,300 @@ function findPlayers() {
     }
 
     // ============================================================
-    // 17. 导出
+    // 20. 模式2：右键菜单
     // ============================================================
 
-    function exportTable() {
-        const players = cachedPlayers.length > 0 ? cachedPlayers : findPlayers();
-        if (players.length === 0) {
-            showToast('没有玩家数据', 1500);
-            return;
+    function showMode2ContextMenu(x, y, targetId, targetName) {
+        const existing = document.getElementById('mode2-context-menu');
+        if (existing) existing.remove();
+
+        const targetJob = store.getIdentity('global', targetId);
+        const allPlayers = cachedPlayers;
+        const allJobs = cachedJobList;
+
+        const itemCount = targetJob ? allPlayers.length + 3 : allJobs.length;
+        const estimatedHeight = Math.min(itemCount * 28 + 20, 400);
+        let top = y;
+        let left = x;
+        if (y + estimatedHeight > window.innerHeight - 10) {
+            top = window.innerHeight - 10 - estimatedHeight;
+            if (top < 10) top = 10;
+        }
+        if (x + 160 > window.innerWidth - 10) {
+            left = window.innerWidth - 10 - 160;
+            if (left < 10) left = 10;
         }
 
-        const data = store.get();
-        const allActions = {};
-        for (const perspective in data.action) {
-            for (const targetName in data.action[perspective]) {
-                if (!allActions[perspective]) allActions[perspective] = {};
-                allActions[perspective][targetName] = data.action[perspective][targetName];
-            }
+        const menu = document.createElement('div');
+        menu.id = 'mode2-context-menu';
+        menu.style.cssText = `
+            position: fixed;
+            left: ${left}px;
+            top: ${top}px;
+            background: #2a2a3a;
+            border: 1px solid #4a4a6a;
+            border-radius: 4px;
+            padding: 4px 0;
+            z-index: 10001;
+            min-width: 140px;
+            max-height: ${Math.min(estimatedHeight, 400)}px;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            font-family: 'Microsoft YaHei', sans-serif;
+            font-size: 12px;
+        `;
+
+        function closeAllMenus() {
+            if (menu.parentNode) menu.remove();
+            document.querySelectorAll('.mode2-submenu').forEach(el => el.remove());
         }
 
-        const groups = {};
-        for (const player of players) {
-            const identity = store.getIdentity('global', player.id);
-            if (!identity) continue;
-
-            if (!groups[identity]) groups[identity] = [];
-            const actions = allActions[player.id] || {};
-            groups[identity].push({
-                name: player.name,
-                actions: Object.entries(actions)
+        function createMenuItem(label, onClick, isHighlight) {
+            const div = document.createElement('div');
+            div.textContent = label;
+            div.style.cssText = `
+                padding: 4px 14px;
+                cursor: pointer;
+                color: ${isHighlight ? '#66ddff' : '#e0e0e0'};
+                font-size: 12px;
+                transition: background 0.1s;
+                ${isHighlight ? 'font-weight:bold;' : ''}
+            `;
+            div.addEventListener('mouseenter', () => {
+                div.style.background = 'rgba(100,200,255,0.1)';
             });
+            div.addEventListener('mouseleave', () => {
+                div.style.background = 'transparent';
+            });
+            div.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onClick();
+                closeAllMenus();
+            });
+            return div;
         }
 
-        let lines = [];
-        for (const job of cachedJobList) {
-            if (!groups[job] || groups[job].length === 0) continue;
-            lines.push(`${job}（${groups[job].length}）`);
-            for (const item of groups[job]) {
-                const parts = item.actions.map(([target, sym]) => {
-                    return target === '自己' ? sym : `${target}${sym}`;
-                });
-                const chain = parts.join('→');
-                if (chain) {
-                    lines.push(`${item.name}：${chain}`);
-                } else {
-                    lines.push(`${item.name}`);
+        function createSubMenu(label, items, isHighlight) {
+            const div = document.createElement('div');
+            div.textContent = label + ' ▶';
+            div.style.cssText = `
+                padding: 4px 14px;
+                cursor: pointer;
+                color: ${isHighlight ? '#66ddff' : '#e0e0e0'};
+                font-size: 12px;
+                transition: background 0.1s;
+                ${isHighlight ? 'font-weight:bold;' : ''}
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            `;
+
+            let subMenu = null;
+            let closeTimeout = null;
+
+            function createSubMenuContent() {
+                document.querySelectorAll('.mode2-submenu').forEach(el => el.remove());
+
+                const sm = document.createElement('div');
+                sm.className = 'mode2-submenu';
+                const rect = div.getBoundingClientRect();
+                let subLeft = rect.right;
+                let subTop = rect.top;
+                if (rect.right + 120 > window.innerWidth) {
+                    subLeft = rect.left - 120;
                 }
+                if (rect.bottom + items.length * 28 > window.innerHeight - 10) {
+                    subTop = window.innerHeight - 10 - items.length * 28;
+                    if (subTop < 10) subTop = 10;
+                }
+                sm.style.cssText = `
+                    position: fixed;
+                    left: ${subLeft}px;
+                    top: ${subTop}px;
+                    background: #2a2a3a;
+                    border: 1px solid #4a4a6a;
+                    border-radius: 4px;
+                    padding: 4px 0;
+                    z-index: 10002;
+                    min-width: 100px;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+                    font-family: 'Microsoft YaHei', sans-serif;
+                    font-size: 12px;
+                `;
+
+                for (const item of items) {
+                    const mi = document.createElement('div');
+                    mi.textContent = item.label;
+                    mi.style.cssText = `
+                        padding: 3px 14px;
+                        cursor: pointer;
+                        color: #e0e0e0;
+                        font-size: 12px;
+                        transition: background 0.1s;
+                    `;
+                    mi.addEventListener('mouseenter', () => {
+                        mi.style.background = 'rgba(100,200,255,0.1)';
+                    });
+                    mi.addEventListener('mouseleave', () => {
+                        mi.style.background = 'transparent';
+                    });
+                    mi.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        item.onClick();
+                        closeAllMenus();
+                    });
+                    sm.appendChild(mi);
+                }
+                return sm;
             }
-            lines.push('');
+
+            function openSubMenu() {
+                if (closeTimeout) {
+                    clearTimeout(closeTimeout);
+                    closeTimeout = null;
+                }
+                if (subMenu) {
+                    subMenu.remove();
+                    subMenu = null;
+                }
+                subMenu = createSubMenuContent();
+                document.body.appendChild(subMenu);
+                subMenu.addEventListener('mouseenter', () => {
+                    if (closeTimeout) {
+                        clearTimeout(closeTimeout);
+                        closeTimeout = null;
+                    }
+                });
+                subMenu.addEventListener('mouseleave', () => {
+                    closeTimeout = setTimeout(() => {
+                        if (subMenu) {
+                            subMenu.remove();
+                            subMenu = null;
+                        }
+                        closeTimeout = null;
+                    }, 300);
+                });
+            }
+
+            div.addEventListener('mouseenter', () => {
+                if (closeTimeout) {
+                    clearTimeout(closeTimeout);
+                    closeTimeout = null;
+                }
+                setTimeout(() => {
+                    if (div.matches(':hover')) {
+                        openSubMenu();
+                    }
+                }, 150);
+            });
+
+            div.addEventListener('mouseleave', (e) => {
+                if (subMenu && subMenu.contains(e.relatedTarget)) {
+                    return;
+                }
+                closeTimeout = setTimeout(() => {
+                    if (subMenu && !subMenu.matches(':hover')) {
+                        subMenu.remove();
+                        subMenu = null;
+                    }
+                    closeTimeout = null;
+                }, 300);
+            });
+
+            div.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (subMenu) {
+                    subMenu.remove();
+                    subMenu = null;
+                } else {
+                    openSubMenu();
+                }
+            });
+
+            return div;
         }
 
-        const text = lines.join('\n');
-        if (!text.trim()) {
-            showToast('暂无数据', 1500);
-            return;
+        if (!targetJob) {
+            for (const job of allJobs) {
+                const isHighlight = (job === '村人');
+                menu.appendChild(createMenuItem(job, () => {
+                    store.setIdentity('global', targetId, job);
+                    renderPlayerList(cachedPlayers);
+                    showToast(`${targetName} → ${job}`, 800);
+                }, isHighlight));
+            }
+        } else {
+            const selfItems = [
+                { label: '×（处刑）', onClick: () => {
+                    store.setAction(targetId, '自己', '×（处刑）');
+                    renderPlayerList(cachedPlayers);
+                    showToast(`${targetName} 标记为处刑`, 800);
+                }},
+                { label: '×（袭击）', onClick: () => {
+                    store.setAction(targetId, '自己', '×（袭击）');
+                    renderPlayerList(cachedPlayers);
+                    showToast(`${targetName} 标记为袭击`, 800);
+                }},
+                { label: '清除', onClick: () => {
+                    store.setAction(targetId, '自己', null);
+                    renderPlayerList(cachedPlayers);
+                    showToast(`已清除 ${targetName} 的死亡标记`, 800);
+                }}
+            ];
+            menu.appendChild(createSubMenu(targetName, selfItems, true));
+
+            const divider = document.createElement('div');
+            divider.style.cssText = 'border-top:1px solid #4a4a6a;margin:4px 8px;';
+            menu.appendChild(divider);
+
+            for (const p of allPlayers) {
+                if (p.id === targetId) continue;
+                const items = [
+                    { label: '○', onClick: () => {
+                        store.setAction(targetId, p.name, '○');
+                        renderPlayerList(cachedPlayers);
+                        showToast(`${targetName} → ${p.name} ○`, 800);
+                    }},
+                    { label: '●', onClick: () => {
+                        store.setAction(targetId, p.name, '●');
+                        renderPlayerList(cachedPlayers);
+                        showToast(`${targetName} → ${p.name} ●`, 800);
+                    }},
+                    { label: '清除', onClick: () => {
+                        store.setAction(targetId, p.name, null);
+                        renderPlayerList(cachedPlayers);
+                        showToast(`已清除 ${targetName} → ${p.name}`, 800);
+                    }}
+                ];
+                menu.appendChild(createSubMenu(p.name, items, false));
+            }
+
+            const divider2 = document.createElement('div');
+            divider2.style.cssText = 'border-top:1px solid #4a4a6a;margin:4px 8px;';
+            menu.appendChild(divider2);
+
+            menu.appendChild(createMenuItem('清除职业', () => {
+                store.setIdentity('global', targetId, null);
+                renderPlayerList(cachedPlayers);
+                showToast(`已清除 ${targetName} 的职业`, 800);
+            }, false));
         }
 
-        navigator.clipboard.writeText(text).then(
-            () => showToast('已复制', 1200),
-            () => {
-                const ta = document.createElement('textarea');
-                ta.value = text;
-                ta.style.cssText = 'position:fixed;left:-9999px;';
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                ta.remove();
-                showToast('已复制', 1200);
+        document.body.appendChild(menu);
+
+        const closeOnClickOutside = (e) => {
+            if (!menu.contains(e.target)) {
+                closeAllMenus();
+                document.removeEventListener('click', closeOnClickOutside);
             }
-        );
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeOnClickOutside);
+        }, 10);
     }
 
     // ============================================================
-    // 18. 初始化
+    // 21. 初始化
     // ============================================================
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
