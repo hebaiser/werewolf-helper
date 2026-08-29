@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.2
+// @version      0.1.3
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -83,45 +83,65 @@
     };
 
     function getSettings() {
-        const stored = GM_getValue(SETTINGS_KEY, null);
-        if (!stored) return JSON.parse(JSON.stringify(defaultSettings));
-        const merged = JSON.parse(JSON.stringify(defaultSettings));
-        for (const key in stored) {
-            if (stored.hasOwnProperty(key) && merged.hasOwnProperty(key)) {
-                if (typeof stored[key] === 'object' && stored[key] !== null && !Array.isArray(stored[key])) {
-                    merged[key] = { ...merged[key], ...stored[key] };
-                } else {
-                    merged[key] = stored[key];
+        try {
+            const stored = GM_getValue(SETTINGS_KEY, null);
+            if (!stored) return JSON.parse(JSON.stringify(defaultSettings));
+            const merged = JSON.parse(JSON.stringify(defaultSettings));
+            for (const key in stored) {
+                if (stored.hasOwnProperty(key) && merged.hasOwnProperty(key)) {
+                    if (typeof stored[key] === 'object' && stored[key] !== null && !Array.isArray(stored[key])) {
+                        merged[key] = { ...merged[key], ...stored[key] };
+                    } else {
+                        merged[key] = stored[key];
+                    }
                 }
             }
-        }
-        if (merged.baseFontSize) {
-            merged.baseFontSize = Number(merged.baseFontSize) || 11;
-        }
-        for (const key in defaultSettings) {
-            if (!(key in merged)) {
-                merged[key] = defaultSettings[key];
+            if (merged.baseFontSize) {
+                merged.baseFontSize = Number(merged.baseFontSize) || 11;
             }
+            for (const key in defaultSettings) {
+                if (!(key in merged)) {
+                    merged[key] = defaultSettings[key];
+                }
+            }
+            return merged;
+        } catch (e) {
+            console.warn('读取设置失败，使用默认设置', e);
+            return JSON.parse(JSON.stringify(defaultSettings));
         }
-        return merged;
     }
 
     function saveSettings(settings) {
-        GM_setValue(SETTINGS_KEY, settings);
+        try {
+            GM_setValue(SETTINGS_KEY, settings);
+        } catch (e) {
+            console.warn('保存设置失败', e);
+            showToast('保存设置失败，请检查存储空间', 2000);
+        }
     }
 
     const store = {
         get() {
-            const all = GM_getValue('werewolf_notes_v29', {});
-            if (!all[ROOM_ID]) {
-                all[ROOM_ID] = { identity: {}, action: {}, jobColors: {} };
+            try {
+                const all = GM_getValue('werewolf_notes_v29', {});
+                if (!all[ROOM_ID]) {
+                    all[ROOM_ID] = { identity: {}, action: {}, jobColors: {} };
+                }
+                return all[ROOM_ID];
+            } catch (e) {
+                console.warn('读取存储数据失败', e);
+                return { identity: {}, action: {}, jobColors: {} };
             }
-            return all[ROOM_ID];
         },
         set(data) {
-            const all = GM_getValue('werewolf_notes_v29', {});
-            all[ROOM_ID] = data;
-            GM_setValue('werewolf_notes_v29', all);
+            try {
+                const all = GM_getValue('werewolf_notes_v29', {});
+                all[ROOM_ID] = data;
+                GM_setValue('werewolf_notes_v29', all);
+            } catch (e) {
+                console.warn('保存存储数据失败', e);
+                showToast('保存数据失败，请检查存储空间', 2000);
+            }
         },
         getIdentity(perspectiveId, playerId) {
             const data = this.get();
@@ -177,7 +197,14 @@
                         entry => entry.target !== targetName
                     );
                 } else {
-                    actionData.targets.push({ target: targetName, symbol: symbol });
+                    const existing = actionData.targets.find(
+                        entry => entry.target === targetName
+                    );
+                    if (existing) {
+                        existing.symbol = symbol;
+                    } else {
+                        actionData.targets.push({ target: targetName, symbol: symbol });
+                    }
                 }
             }
             this.set(data);
@@ -198,9 +225,25 @@
             return this.get().jobColors || {};
         },
         clearAll() {
-            const all = GM_getValue('werewolf_notes_v29', {});
-            all[ROOM_ID] = { identity: {}, action: {}, jobColors: {} };
-            GM_setValue('werewolf_notes_v29', all);
+            try {
+                const all = GM_getValue('werewolf_notes_v29', {});
+                all[ROOM_ID] = { identity: {}, action: {}, jobColors: {} };
+                GM_setValue('werewolf_notes_v29', all);
+            } catch (e) {
+                console.warn('清除数据失败', e);
+                showToast('清除数据失败', 1500);
+            }
+        },
+        clearRoomData() {
+            try {
+                const all = GM_getValue('werewolf_notes_v29', {});
+                delete all[ROOM_ID];
+                GM_setValue('werewolf_notes_v29', all);
+                showToast('当前房间数据已清除', 1500);
+            } catch (e) {
+                console.warn('清除房间数据失败', e);
+                showToast('清除失败', 1500);
+            }
         }
     };
 
@@ -341,6 +384,38 @@
     function findPlayers() {
         const players = [];
         const seen = new Set();
+
+        const deadIds = new Set();
+        const deathImgs = document.querySelectorAll('img[alt="死亡"]');
+        for (const img of deathImgs) {
+            let parent = img.parentElement;
+            let found = false;
+            for (let i = 0; i < 8 && parent && parent !== document.body; i++) {
+                const link = parent.querySelector('a[href^="/user/"]');
+                if (link) {
+                    const href = link.getAttribute('href');
+                    const id = href.replace(/.*\/user\//, '').split('?')[0];
+                    if (id) {
+                        deadIds.add(id);
+                        found = true;
+                        break;
+                    }
+                }
+                parent = parent.parentElement;
+            }
+            if (!found) {
+                const siblings = img.parentElement.querySelectorAll('a[href^="/user/"]');
+                for (const link of siblings) {
+                    const href = link.getAttribute('href');
+                    const id = href.replace(/.*\/user\//, '').split('?')[0];
+                    if (id) {
+                        deadIds.add(id);
+                        break;
+                    }
+                }
+            }
+        }
+
         const links = document.querySelectorAll('a[href^="/user/"]');
         for (const link of links) {
             const href = link.getAttribute('href');
@@ -349,19 +424,11 @@
             const name = link.textContent.trim();
             if (!name || name.includes('游戏管理员') || name === '游戏管理员') continue;
             seen.add(id);
-            let isDead = false;
-            if (name === '替身君') {
-                isDead = true;
-            } else {
-                let container = link.closest('.sc-gxMtzJ');
-                if (container) {
-                    if (container.querySelector('img[alt="死亡"]')) {
-                        isDead = true;
-                    }
-                }
-            }
+
+            const isDead = deadIds.has(id) || name === '替身君';
             players.push({ id, name, isDead });
         }
+
         return players;
     }
 
@@ -492,7 +559,7 @@
     let isLongPress = false;
     let previewWindow = null;
     let previewBlocks = [];
-    const LONG_PRESS_DELAY = 500;
+    const LONG_PRESS_DELAY = 800;
 
     // ============================================================
     // 7. Toast
@@ -676,7 +743,8 @@
                 <button id="settings-close-btn" style="background:none;border:none;color:${themeColors.textSecondary};font-size:20px;cursor:pointer;padding:0 4px;">×</button>
             </div>
             <div id="settings-body"></div>
-            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;border-top:1px solid ${themeColors.divider};padding-top:14px;">
+            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;border-top:1px solid ${themeColors.divider};padding-top:14px;position:sticky;bottom:0;background:${themeColors.bg};z-index:1;flex-wrap:wrap;">
+                <button id="settings-clear-data-btn" style="padding:6px 14px;border-radius:4px;border:1px solid #8a4a4a;background:#5a2a2a;color:#e0a0a0;cursor:pointer;font-size:12px;">🗑 清除当前房间数据</button>
                 <button id="settings-reset-jobcolors-btn" style="padding:6px 14px;border-radius:4px;border:1px solid ${themeColors.border};background:transparent;color:${themeColors.textSecondary};cursor:pointer;font-size:12px;">重置职业颜色</button>
                 <button id="settings-reset-colors-btn" style="padding:6px 14px;border-radius:4px;border:1px solid ${themeColors.border};background:transparent;color:${themeColors.textSecondary};cursor:pointer;font-size:12px;">重置界面颜色</button>
                 <button id="settings-save-btn" style="padding:6px 20px;border-radius:4px;border:none;background:#4a8a5a;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">保存</button>
@@ -715,6 +783,13 @@
                 renderSettingsBody();
                 bindSettingsEvents();
                 previewSettings();
+            }
+        });
+        modal.querySelector('#settings-clear-data-btn').addEventListener('click', () => {
+            if (confirm('确定要清除当前房间的所有数据吗？此操作不可撤销！')) {
+                store.clearRoomData();
+                renderPlayerList(cachedPlayers);
+                closeSettings();
             }
         });
         bindSettingsEvents();
@@ -889,7 +964,7 @@
                     <button data-mode="menu" style="flex:1;padding:6px 8px;border-radius:4px;border:1px solid ${opMode === 'menu' ? '#66aadd' : colors.border};background:${opMode === 'menu' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${opMode === 'menu' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;line-height:1.4;">📋 右键菜单操作</button>
                 </div>
                 <div style="font-size:11px;color:${colors.textSecondary};margin-top:4px;">
-                    ${opMode === 'quick' ? '当前模式：右键点击玩家切换视角' : '当前模式：右键点击玩家弹出操作菜单'}
+                    ${opMode === 'quick' ? '当前模式：右键点击玩家切换视角' : '当前模式：左键点击玩家高亮发言，右键弹出操作菜单'}
                 </div>
             </div>
             <div style="margin-bottom:16px;">
@@ -975,10 +1050,10 @@
         if (closeBtn) {
             closeBtn.style.color = colors.textSecondary;
         }
-        const resetBtns = modal.querySelectorAll('#settings-reset-jobcolors-btn, #settings-reset-colors-btn');
+        const resetBtns = modal.querySelectorAll('#settings-reset-jobcolors-btn, #settings-reset-colors-btn, #settings-clear-data-btn');
         resetBtns.forEach(btn => {
-            btn.style.color = colors.textSecondary;
-            btn.style.borderColor = colors.border;
+            btn.style.color = btn.id === 'settings-clear-data-btn' ? '#e0a0a0' : colors.textSecondary;
+            btn.style.borderColor = btn.id === 'settings-clear-data-btn' ? '#8a4a4a' : colors.border;
         });
     }
 
@@ -1131,7 +1206,6 @@
             pendingSettings.deathOpacity = settings.deathOpacity || 0.5;
         }
         applySettingsToSidebar(pendingSettings);
-        // 预览窗口自动刷新
         const container = document.getElementById('werewolf-preview-container');
         if (container && container.style.display !== 'none') {
             updatePreviewWindow();
@@ -1139,7 +1213,7 @@
     }
 
     // ============================================================
-    // 12. 灰区计算（修复：正确遍历两层数据结构）
+    // 12. 灰区计算（修正：占卜师所有目标都死亡时也记录）
     // ============================================================
 
     function calculateGrayZones() {
@@ -1155,38 +1229,26 @@
             if (p.isDead) deadPlayerIds.add(p.id);
         }
 
-        // 遍历所有视角，收集所有被声明为职业的玩家（非村人）
+        const globalIdentities = identities['global'] || {};
         const claimedPlayerIds = new Set();
-        for (const perspectiveId in identities) {
-            const perspectiveData = identities[perspectiveId];
-            for (const pid in perspectiveData) {
-                const job = perspectiveData[pid];
-                if (job && job !== '村人') {
-                    claimedPlayerIds.add(pid);
-                }
+
+        for (const pid in globalIdentities) {
+            const job = globalIdentities[pid];
+            if (job && job !== '村人') {
+                claimedPlayerIds.add(pid);
             }
         }
 
-        // 遍历所有视角查找玩家职业
-        function getPlayerJob(pid) {
-            for (const perspectiveId in identities) {
-                const perspectiveData = identities[perspectiveId];
-                if (perspectiveData[pid] && perspectiveData[pid] !== '村人') {
-                    return perspectiveData[pid];
-                }
-            }
-            return null;
-        }
-
-        // 只统计占卜师的占卜记录
         const divineRecords = {};
         for (const operatorId in actionData) {
             const data = actionData[operatorId];
             if (!data || !data.targets || data.targets.length === 0) continue;
 
-            const operatorJob = getPlayerJob(operatorId);
+            const operatorJob = globalIdentities[operatorId];
             if (operatorJob !== '占卜师') continue;
 
+            // 修正：只要有占卜目标就记录，不管目标死活
+            // 死人在后续灰区计算中会被 deadPlayerIds 过滤掉
             divineRecords[operatorId] = data.targets.map(t => t.target);
         }
 
@@ -1276,7 +1338,6 @@
             groups[job].push({ name: player.name, chain: chain.join('→'), id: pid });
         }
 
-        // 先处理占卜师（带独立灰区）
         const divineJob = '占卜师';
         if (groups[divineJob] && groups[divineJob].length > 0) {
             blocks.push({
@@ -1320,7 +1381,6 @@
                     editable: true
                 });
 
-                // 每个占卜师后面跟独立灰区
                 if (s.showIndependentGray) {
                     const opId = item.id;
                     if (opId && grayZones.independentGray[opId]?.length > 0) {
@@ -1349,7 +1409,6 @@
             });
         }
 
-        // 所有占卜师之后，其他职业之前，显示共灰区
         if (s.showCommonGray && grayZones.commonGray.length > 0) {
             blocks.push({
                 id: 'block_job_' + counter++,
@@ -1375,7 +1434,6 @@
                 content: '\n',
                 editable: true
             });
-            // 共灰后额外空行分隔
             blocks.push({
                 id: 'block_sep_' + counter++,
                 type: 'separator',
@@ -1384,7 +1442,6 @@
             });
         }
 
-        // 处理其他职业（除占卜师外）
         for (const job of jobOrder) {
             if (job === divineJob) continue;
             if (!groups[job] || groups[job].length === 0) continue;
@@ -1442,41 +1499,6 @@
         return blocks;
     }
 
-    function parseChainParts(chain) {
-        const parts = [];
-        let i = 0;
-        while (i < chain.length) {
-            if (chain[i] === '×') {
-                let end = i + 1;
-                while (end < chain.length && chain[end] !== '→') end++;
-                parts.push(chain.substring(i, end));
-                i = end;
-                if (i < chain.length && chain[i] === '→') {
-                    parts.push('→');
-                    i++;
-                }
-                continue;
-            }
-            let end = i;
-            while (end < chain.length && chain[end] !== '○' && chain[end] !== '●' && chain[end] !== '→') {
-                end++;
-            }
-            if (end > i) {
-                parts.push(chain.substring(i, end));
-                i = end;
-            }
-            if (i < chain.length && (chain[i] === '○' || chain[i] === '●')) {
-                parts.push(chain[i]);
-                i++;
-            }
-            if (i < chain.length && chain[i] === '→') {
-                parts.push('→');
-                i++;
-            }
-        }
-        return parts;
-    }
-
     function blocksToText(blocks) {
         let text = '';
         for (const block of blocks) {
@@ -1488,6 +1510,79 @@
         }
         return text;
     }
+
+    // ============================================================
+    // 14. 放大镜映射表构建
+    // ============================================================
+
+    function buildSearchIconMap() {
+        searchIconMap.clear();
+        const icons = document.querySelectorAll('svg.fa-search, svg[class*="fa-search"]');
+        for (const icon of icons) {
+            const playerContainer = icon.closest('.sc-jtRfpW');
+            if (!playerContainer) continue;
+            const nameLink = playerContainer.querySelector('a[href^="/user/"]');
+            if (!nameLink) continue;
+            const href = nameLink.getAttribute('href');
+            const id = href.replace(/.*\/user\//, '').split('?')[0];
+            if (id) {
+                searchIconMap.set(id, icon);
+            }
+        }
+        return searchIconMap;
+    }
+
+    // ============================================================
+    // 15. 触发玩家高亮（修正：点击父级 span，实时查找）
+    // ============================================================
+
+    function triggerPlayerHighlight(playerId) {
+        if (!playerId) return false;
+
+        // ★ 每次实时查找，不依赖缓存的引用 ★
+        const link = document.querySelector(`a[href="/user/${CSS.escape(playerId)}"]`);
+        if (!link) {
+            showToast(`未找到玩家「${playerId}」`, 1500);
+            return false;
+        }
+
+        const container = link.closest('.sc-jtRfpW');
+        if (!container) {
+            showToast(`未找到玩家「${playerId}」的容器`, 1500);
+            return false;
+        }
+
+        const icon = container.querySelector('svg.fa-search, svg[class*="fa-search"]');
+        if (!icon) {
+            showToast(`未找到「${playerId}」的发言高亮按钮`, 1500);
+            return false;
+        }
+
+        try {
+            // ★ 关键修正：点击 SVG 最近的父级 span（事件绑定在 span 上） ★
+            const clickTarget = icon.closest('span');
+            if (clickTarget) {
+                clickTarget.click();
+                const player = cachedPlayers.find(p => p.id === playerId);
+                const displayName = player ? player.name : playerId;
+                showToast(`🔍 已高亮「${displayName}」的发言`, 1000);
+                return true;
+            } else {
+                // 兜底：直接点击 icon
+                icon.click();
+                showToast(`🔍 已高亮「${playerId}」的发言`, 1000);
+                return true;
+            }
+        } catch (e) {
+            console.warn('触发高亮失败:', e);
+            showToast(`高亮失败，请尝试手动点击发言旁的🔍图标`, 1500);
+            return false;
+        }
+    }
+
+    // ============================================================
+    // 16. 预览窗口
+    // ============================================================
 
     function createPreviewWindow() {
         if (document.getElementById('werewolf-preview-container')) {
@@ -1554,6 +1649,7 @@
             <div style="display:flex;gap:6px;align-items:center;">
                 <button id="preview-copy-btn" style="padding:1px 8px;border-radius:3px;border:1px solid #4a6a8a;background:#2a3a5a;color:#a0a0b0;cursor:pointer;font-size:10px;">复制</button>
                 <button id="preview-refresh-btn" style="padding:1px 8px;border-radius:3px;border:1px solid #4a8a5a;background:#2a5a3a;color:#a0a0b0;cursor:pointer;font-size:10px;">刷新</button>
+                <button id="preview-reset-btn" style="padding:1px 8px;border-radius:3px;border:1px solid #8a4a4a;background:#5a2a2a;color:#a0a0b0;cursor:pointer;font-size:10px;">重置</button>
                 <button id="preview-close-btn" style="padding:1px 8px;border-radius:3px;border:1px solid #8a4a4a;background:#5a2a2a;color:#a0a0b0;cursor:pointer;font-size:10px;">×</button>
             </div>
         `;
@@ -1606,37 +1702,29 @@
         });
 
         document.getElementById('preview-refresh-btn').addEventListener('click', () => {
-            updatePreviewWindow();
-            showToast('已刷新', 800);
+            updatePreviewWindow({ preserveEdits: true });
+            showToast('已刷新数据', 800);
+        });
+
+        document.getElementById('preview-reset-btn').addEventListener('click', () => {
+            updatePreviewWindow({ preserveEdits: false });
+            showToast('已重置预览', 800);
         });
 
         let isDragging = false;
         let dragOffset = { x: 0, y: 0 };
 
-        titleBar.addEventListener('mousedown', (e) => {
-            if (e.target.closest('button')) return;
-            isDragging = true;
-            const rect = container.getBoundingClientRect();
-            dragOffset.x = e.clientX - rect.left;
-            dragOffset.y = e.clientY - rect.top;
-            container.style.cursor = 'grabbing';
-            container.style.left = 'auto';
-            container.style.right = 'auto';
-            container.style.transform = 'none';
-            container.style.top = (rect.top || 0) + 'px';
-            container.style.bottom = 'auto';
-            e.preventDefault();
-        });
-
-        document.addEventListener('mousemove', (e) => {
+        const onMouseMove = (e) => {
             if (!isDragging) return;
             const x = Math.max(0, e.clientX - dragOffset.x);
             const y = Math.max(0, e.clientY - dragOffset.y);
             container.style.left = x + 'px';
             container.style.top = y + 'px';
-        });
+            container.style.transform = 'none';
+            container.style.bottom = 'auto';
+        };
 
-        document.addEventListener('mouseup', () => {
+        const onMouseUp = () => {
             if (isDragging) {
                 isDragging = false;
                 container.style.cursor = 'default';
@@ -1645,11 +1733,28 @@
                 s.previewPosition = { x: rect.left, y: rect.top };
                 saveSettings(s);
             }
+        };
+
+        titleBar.addEventListener('mousedown', (e) => {
+            if (e.target.closest('button')) return;
+            isDragging = true;
+            const rect = container.getBoundingClientRect();
+            dragOffset.x = e.clientX - rect.left;
+            dragOffset.y = e.clientY - rect.top;
+            container.style.cursor = 'grabbing';
+            container.style.left = rect.left + 'px';
+            container.style.top = rect.top + 'px';
+            container.style.transform = 'none';
+            container.style.bottom = 'auto';
+            e.preventDefault();
         });
 
-        // 延迟更新确保 DOM 渲染完成
+        container.addEventListener('mousemove', onMouseMove);
+        container.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('mouseup', onMouseUp);
+
         setTimeout(() => {
-            updatePreviewWindow();
+            updatePreviewWindow({ preserveEdits: false });
         }, 50);
     }
 
@@ -1658,7 +1763,7 @@
         if (container) {
             if (container.style.display === 'none') {
                 container.style.display = 'flex';
-                setTimeout(() => updatePreviewWindow(), 50);
+                setTimeout(() => updatePreviewWindow({ preserveEdits: true }), 50);
             } else {
                 container.style.display = 'none';
             }
@@ -1669,87 +1774,93 @@
 
     function closePreviewWindow() {
         const container = document.getElementById('werewolf-preview-container');
-        if (container) container.remove();
+        if (container) {
+            container.remove();
+        }
         previewWindow = null;
     }
 
-    function updatePreviewWindow() {
+    function updatePreviewWindow(options = { preserveEdits: true }) {
         const editor = document.getElementById('preview-editor');
         if (!editor) return;
 
         const s = getSettings();
         const newBlocks = buildExportBlocks(s);
 
-        // 保存当前可编辑块的内容
-        const editableContents = {};
-        const spans = editor.querySelectorAll('span[contenteditable="true"]');
-        for (const span of spans) {
-            editableContents[span.dataset.blockId] = span.textContent;
-        }
+        if (options.preserveEdits) {
+            const editableContents = {};
+            const spans = editor.querySelectorAll('span[contenteditable="true"]');
+            for (const span of spans) {
+                editableContents[span.dataset.blockId] = span.textContent;
+            }
 
-        editor.innerHTML = '';
+            editor.innerHTML = '';
 
-        for (const block of newBlocks) {
-            if (block.type === 'separator') {
-                if (block.content === '\n') {
-                    editor.appendChild(document.createElement('br'));
-                } else {
-                    editor.appendChild(document.createTextNode(block.content));
+            for (const block of newBlocks) {
+                if (block.type === 'separator') {
+                    if (block.content === '\n') {
+                        editor.appendChild(document.createElement('br'));
+                    } else {
+                        editor.appendChild(document.createTextNode(block.content));
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            const span = document.createElement('span');
-            // 保留用户编辑的内容
-            if (editableContents[block.id] !== undefined && block.editable) {
-                span.textContent = editableContents[block.id];
-            } else {
+                const span = document.createElement('span');
+                if (editableContents[block.id] !== undefined && block.editable) {
+                    span.textContent = editableContents[block.id];
+                } else {
+                    span.textContent = block.content;
+                }
+                span.contentEditable = block.editable ? 'true' : 'false';
+                span.dataset.blockId = block.id;
+                span.dataset.blockType = block.type;
+                span.dataset.originalContent = block.content;
+
+                if (!block.editable) {
+                    span.style.cssText = `
+                        background: rgba(60, 60, 80, 0.25);
+                        border-radius: 2px;
+                        padding: 0 2px;
+                        cursor: default;
+                    `;
+                }
+
+                editor.appendChild(span);
+            }
+        } else {
+            editor.innerHTML = '';
+            for (const block of newBlocks) {
+                if (block.type === 'separator') {
+                    if (block.content === '\n') {
+                        editor.appendChild(document.createElement('br'));
+                    } else {
+                        editor.appendChild(document.createTextNode(block.content));
+                    }
+                    continue;
+                }
+
+                const span = document.createElement('span');
                 span.textContent = block.content;
-            }
-            span.contentEditable = block.editable ? 'true' : 'false';
-            span.dataset.blockId = block.id;
-            span.dataset.blockType = block.type;
-            span.dataset.originalContent = block.content;
+                span.contentEditable = block.editable ? 'true' : 'false';
+                span.dataset.blockId = block.id;
+                span.dataset.blockType = block.type;
+                span.dataset.originalContent = block.content;
 
-            if (!block.editable) {
-                span.style.cssText = `
-                    background: rgba(60, 60, 80, 0.25);
-                    border-radius: 2px;
-                    padding: 0 2px;
-                    cursor: default;
-                `;
-            }
+                if (!block.editable) {
+                    span.style.cssText = `
+                        background: rgba(60, 60, 80, 0.25);
+                        border-radius: 2px;
+                        padding: 0 2px;
+                        cursor: default;
+                    `;
+                }
 
-            editor.appendChild(span);
+                editor.appendChild(span);
+            }
         }
 
         previewBlocks = newBlocks;
-    }
-
-    function exportToClipboard() {
-        const s = getSettings();
-        const blocks = buildExportBlocks(s);
-        const text = blocksToText(blocks);
-
-        if (!text.trim()) {
-            showToast('暂无数据', 1500);
-            return false;
-        }
-
-        navigator.clipboard.writeText(text).then(
-            () => { showToast('已复制', 1200); },
-            () => {
-                const ta = document.createElement('textarea');
-                ta.value = text;
-                ta.style.cssText = 'position:fixed;left:-9999px;';
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                ta.remove();
-                showToast('已复制', 1200);
-            }
-        );
-        return true;
     }
 
     function getExportText() {
@@ -1759,7 +1870,7 @@
     }
 
     // ============================================================
-    // 14. UI 创建
+    // 17. UI 创建
     // ============================================================
 
     function createSidebar() {
@@ -1833,7 +1944,7 @@
         });
 
         const exportBtn = document.createElement('button');
-        exportBtn.textContent = '导出';
+        exportBtn.textContent = '导出 ▼';
         exportBtn.style.cssText = btnStyle + 'background:#2a3a5a;border-color:#4a6a8a;';
 
         exportBtn.addEventListener('click', (e) => {
@@ -1936,11 +2047,13 @@
             }
         }
 
-        setTimeout(refreshAll, 500);
+        setTimeout(() => {
+            refreshAll();
+        }, 500);
     }
 
     // ============================================================
-    // 15. 导出右键菜单
+    // 18. 导出右键菜单
     // ============================================================
 
     function showExportContextMenu(x, y) {
@@ -2000,7 +2113,7 @@
                         try { closePreviewWindow(); } catch(e) {}
                     }
                 } else {
-                    try { updatePreviewWindow(); } catch(e) {}
+                    try { updatePreviewWindow({ preserveEdits: true }); } catch(e) {}
                 }
                 menu.remove();
                 showToast(`${item.label.replace(/[☑☐]\s/, '')} ${settings[item.key] ? '已开启' : '已关闭'}`, 800);
@@ -2020,7 +2133,7 @@
     }
 
     // ============================================================
-    // 16. 收起/展开
+    // 19. 收起/展开
     // ============================================================
 
     function toggleSidebar() {
@@ -2084,7 +2197,7 @@
     }
 
     // ============================================================
-    // 17. 更新指示器
+    // 20. 更新指示器
     // ============================================================
 
     function updateIndicator() {
@@ -2108,7 +2221,7 @@
     }
 
     // ============================================================
-    // 18. 刷新
+    // 21. 刷新
     // ============================================================
 
     function refreshAll() {
@@ -2123,7 +2236,7 @@
             renderPlayerList(players);
             try {
                 if (document.getElementById('werewolf-preview-container')) {
-                    updatePreviewWindow();
+                    updatePreviewWindow({ preserveEdits: true });
                 }
             } catch(e) {}
         } else {
@@ -2134,7 +2247,7 @@
     }
 
     // ============================================================
-    // 19. 渲染玩家列表
+    // 22. 渲染玩家列表
     // ============================================================
 
     function renderPlayerList(players, settingsOverride) {
@@ -2393,6 +2506,14 @@
             };
 
             if (opMode === 'menu') {
+                // 菜单模式：左键点击触发高亮
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const id = item.dataset.playerId;
+                    triggerPlayerHighlight(id);
+                });
+
+                // 右键弹出操作菜单
                 item.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -2401,27 +2522,15 @@
                     showMode2ContextMenu(e.clientX, e.clientY, targetId, targetName);
                 });
 
-                item.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const id = item.dataset.playerId;
-                    const currentJob = store.getIdentity('global', id);
-                    const nextJob = getNextJob(currentJob, 1);
-                    store.setIdentity('global', id, nextJob);
-                    renderPlayerList(cachedPlayers);
-                });
-
+                // 菜单模式下滚轮不执行任何操作
                 item.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    const id = item.dataset.playerId;
-                    const direction = e.deltaY > 0 ? 1 : -1;
-                    const currentJob = store.getIdentity('global', id);
-                    const nextJob = getNextJob(currentJob, direction);
-                    store.setIdentity('global', id, nextJob);
-                    renderPlayerList(cachedPlayers);
+                    return;
                 });
 
             } else {
+                // 快速模式
                 const onMouseDown = (e) => {
                     const btn = e.button;
                     if (btn === 0 || btn === 2) {
@@ -2604,7 +2713,7 @@
     }
 
     // ============================================================
-    // 20. 模式2：右键菜单
+    // 23. 模式2：右键菜单
     // ============================================================
 
     function showMode2ContextMenu(x, y, targetId, targetName) {
@@ -2897,7 +3006,7 @@
     }
 
     // ============================================================
-    // 21. 初始化
+    // 24. 初始化
     // ============================================================
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
