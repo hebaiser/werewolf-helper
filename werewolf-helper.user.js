@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.3
+// @version      0.1.4
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -964,7 +964,7 @@
                     <button data-mode="menu" style="flex:1;padding:6px 8px;border-radius:4px;border:1px solid ${opMode === 'menu' ? '#66aadd' : colors.border};background:${opMode === 'menu' ? 'rgba(100,200,255,0.15)' : 'transparent'};color:${opMode === 'menu' ? '#66aadd' : colors.textSecondary};cursor:pointer;font-size:12px;line-height:1.4;">📋 右键菜单操作</button>
                 </div>
                 <div style="font-size:11px;color:${colors.textSecondary};margin-top:4px;">
-                    ${opMode === 'quick' ? '当前模式：右键点击玩家切换视角' : '当前模式：左键点击玩家高亮发言，右键弹出操作菜单'}
+                    ${opMode === 'quick' ? '当前模式：左键高亮发言，滚轮记录占卜，右键切换视角，长按右键清空身份' : '当前模式：左键高亮发言，右键弹出操作菜单'}
                 </div>
             </div>
             <div style="margin-bottom:16px;">
@@ -1247,8 +1247,6 @@
             const operatorJob = globalIdentities[operatorId];
             if (operatorJob !== '占卜师') continue;
 
-            // 修正：只要有占卜目标就记录，不管目标死活
-            // 死人在后续灰区计算中会被 deadPlayerIds 过滤掉
             divineRecords[operatorId] = data.targets.map(t => t.target);
         }
 
@@ -1944,7 +1942,7 @@
         });
 
         const exportBtn = document.createElement('button');
-        exportBtn.textContent = '导出 ▼';
+        exportBtn.textContent = '导出▼';
         exportBtn.style.cssText = btnStyle + 'background:#2a3a5a;border-color:#4a6a8a;';
 
         exportBtn.addEventListener('click', (e) => {
@@ -2505,6 +2503,9 @@
                 isLongPress = false;
             };
 
+            // ============================================================
+            // ★ 核心修改：两种模式的左键都统一为高亮 ★
+            // ============================================================
             if (opMode === 'menu') {
                 // 菜单模式：左键点击触发高亮
                 item.addEventListener('click', (e) => {
@@ -2530,10 +2531,11 @@
                 });
 
             } else {
-                // 快速模式
+                // 快速模式：左键点击改为触发高亮
                 const onMouseDown = (e) => {
                     const btn = e.button;
-                    if (btn === 0 || btn === 2) {
+                    // 只有右键需要长按处理（清空身份+撤回）
+                    if (btn === 2) {
                         isLongPress = false;
                         clearLongPress();
                         longPressTimer = setTimeout(() => {
@@ -2545,7 +2547,7 @@
 
                 const onMouseUp = (e) => {
                     const btn = e.button;
-                    if (btn === 0 || btn === 2) {
+                    if (btn === 2) {
                         clearLongPress();
                         if (isLongPress) {
                             isLongPress = false;
@@ -2559,7 +2561,7 @@
                     const targetName = item.dataset.playerName;
 
                     if (currentPerspective === null) {
-                        if (btn === 0) {
+                        if (btn === 2) {
                             store.setIdentity('global', id, null);
                             renderPlayerList(cachedPlayers);
                             showToast('已清空身份', 800);
@@ -2567,11 +2569,7 @@
                         return;
                     }
 
-                    if (btn === 0) {
-                        store.setIdentity(currentPerspective, id, null);
-                        renderPlayerList(cachedPlayers);
-                        showToast('已清空身份', 800);
-                    } else if (btn === 2) {
+                    if (btn === 2) {
                         store.clearAction(currentPerspective);
                         store.setIdentity(currentPerspective, id, null);
                         renderPlayerList(cachedPlayers);
@@ -2579,6 +2577,7 @@
                     }
                 };
 
+                // ★ 左键点击改为高亮，不再切换职业 ★
                 item.addEventListener('click', (e) => {
                     if (isLongPress) {
                         e.stopPropagation();
@@ -2586,18 +2585,10 @@
                     }
                     e.stopPropagation();
                     const id = item.dataset.playerId;
-                    let targetPerspective;
-                    if (currentPerspective === null) {
-                        targetPerspective = 'global';
-                    } else {
-                        targetPerspective = currentPerspective;
-                    }
-                    const currentJob = store.getIdentity(targetPerspective, id);
-                    const nextJob = getNextJob(currentJob, 1);
-                    store.setIdentity(targetPerspective, id, nextJob);
-                    renderPlayerList(cachedPlayers);
+                    triggerPlayerHighlight(id);
                 });
 
+                // ★ 滚轮功能保持不变：循环切换占卜记录 ★
                 item.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -2643,6 +2634,7 @@
                     renderPlayerList(cachedPlayers);
                 }, { passive: false });
 
+                // ★ 右键功能保持不变：切换视角 ★
                 item.addEventListener('contextmenu', (e) => {
                     if (isLongPress) {
                         e.preventDefault();
@@ -2669,6 +2661,7 @@
                     renderPlayerList(cachedPlayers);
                 });
 
+                // ★ 中键功能保持不变：清空行动记录 ★
                 item.addEventListener('auxclick', (e) => {
                     if (e.button !== 1) return;
                     e.preventDefault();
