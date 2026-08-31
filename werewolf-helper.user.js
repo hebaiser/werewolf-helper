@@ -575,9 +575,6 @@
     let previewWindow = null;
     let previewBlocks = [];
     const LONG_PRESS_DELAY = 800;
-    let resizeObserver = null;
-    let initialRenderDone = false;
-    let renderTimeout = null;
 
     // ============================================================
     // 7. Toast
@@ -1231,7 +1228,7 @@
     }
 
     // ============================================================
-    // 12. 灰区计算
+    // 12. 灰区计算（修正：占卜师所有目标都死亡时也记录）
     // ============================================================
 
     function calculateGrayZones() {
@@ -1528,7 +1525,28 @@
     }
 
     // ============================================================
-    // 14. 触发玩家高亮
+    // 14. 放大镜映射表构建
+    // ============================================================
+
+    function buildSearchIconMap() {
+        searchIconMap.clear();
+        const icons = document.querySelectorAll('svg.fa-search, svg[class*="fa-search"]');
+        for (const icon of icons) {
+            const playerContainer = icon.closest('.sc-jtRfpW');
+            if (!playerContainer) continue;
+            const nameLink = playerContainer.querySelector('a[href^="/user/"]');
+            if (!nameLink) continue;
+            const href = nameLink.getAttribute('href');
+            const id = href.replace(/.*\/user\//, '').split('?')[0];
+            if (id) {
+                searchIconMap.set(id, icon);
+            }
+        }
+        return searchIconMap;
+    }
+
+    // ============================================================
+    // 15. 触发玩家高亮
     // ============================================================
 
     function triggerPlayerHighlight(playerId) {
@@ -1573,7 +1591,7 @@
     }
 
     // ============================================================
-    // 15. 预览窗口
+    // 16. 预览窗口
     // ============================================================
 
     function createPreviewWindow() {
@@ -1862,7 +1880,7 @@
     }
 
     // ============================================================
-    // 16. UI 创建
+    // 17. UI 创建
     // ============================================================
 
     function createSidebar() {
@@ -1908,7 +1926,7 @@
         playerList.style.cssText = `
             flex:1;overflow-y:auto;min-height:30px;max-height:calc(100vh - 160px);
         `;
-        playerList.innerHTML = '<div style="color:#666;text-align:center;padding:10px;font-size:10px;">加载中...</div>';
+        playerList.innerHTML = '<div style="color:#666;text-align:center;padding:10px;font-size:10px;">点击「读取」刷新</div>';
 
         const toolbar = document.createElement('div');
         toolbar.id = 'werewolf-toolbar';
@@ -1979,15 +1997,6 @@
             renderPlayerList([]);
             showToast('已重置', 1500);
             closePreviewWindow();
-            // 重置后重新触发首次渲染流程
-            initialRenderDone = false;
-            if (resizeObserver) {
-                resizeObserver.disconnect();
-                resizeObserver = null;
-            }
-            if (playerList) {
-                setupResizeObserver(playerList);
-            }
         });
 
         const settingsBtn = document.createElement('button');
@@ -2048,73 +2057,13 @@
             }
         }
 
-        // ★ 使用 ResizeObserver 监听容器获得实际高度 ★
-        setupResizeObserver(playerList);
-    }
-
-    // ============================================================
-    // 16.1 ResizeObserver 设置
-    // ============================================================
-
-    function setupResizeObserver(playerList) {
-        if (resizeObserver) {
-            resizeObserver.disconnect();
-            resizeObserver = null;
-        }
-
-        initialRenderDone = false;
-        if (renderTimeout) {
-            clearTimeout(renderTimeout);
-            renderTimeout = null;
-        }
-
-        resizeObserver = new ResizeObserver((entries) => {
-            if (initialRenderDone) return;
-
-            for (const entry of entries) {
-                const height = entry.contentRect.height;
-                // 容器获得实际高度（> 10）时触发首次渲染
-                if (height > 10) {
-                    if (renderTimeout) {
-                        clearTimeout(renderTimeout);
-                    }
-                    renderTimeout = setTimeout(() => {
-                        if (!initialRenderDone) {
-                            refreshAll();
-                            initialRenderDone = true;
-                            renderTimeout = null;
-                            if (resizeObserver) {
-                                resizeObserver.disconnect();
-                                resizeObserver = null;
-                            }
-                        }
-                    }, 100);
-                    break;
-                }
-            }
-        });
-
-        resizeObserver.observe(playerList);
-
-        // ★ 兜底：5秒后如果还没有渲染，强制渲染一次 ★
         setTimeout(() => {
-            if (!initialRenderDone) {
-                refreshAll();
-                initialRenderDone = true;
-                if (resizeObserver) {
-                    resizeObserver.disconnect();
-                    resizeObserver = null;
-                }
-                if (renderTimeout) {
-                    clearTimeout(renderTimeout);
-                    renderTimeout = null;
-                }
-            }
-        }, 5000);
+            refreshAll();
+        }, 500);
     }
 
     // ============================================================
-    // 17. 导出右键菜单
+    // 18. 导出右键菜单
     // ============================================================
 
     function showExportContextMenu(x, y) {
@@ -2194,7 +2143,7 @@
     }
 
     // ============================================================
-    // 18. 收起/展开
+    // 19. 收起/展开
     // ============================================================
 
     function toggleSidebar() {
@@ -2254,21 +2203,11 @@
             if (ind) ind.style.display = 'inline';
             if (cb) cb.style.display = 'block';
             if (expandBtn) expandBtn.style.display = 'none';
-
-            // ★ 展开后重新触发首次渲染流程 ★
-            if (cachedPlayers.length > 0) {
-                renderPlayerList(cachedPlayers);
-            } else {
-                initialRenderDone = false;
-                if (list) {
-                    setupResizeObserver(list);
-                }
-            }
         }
     }
 
     // ============================================================
-    // 19. 更新指示器
+    // 20. 更新指示器
     // ============================================================
 
     function updateIndicator() {
@@ -2292,7 +2231,7 @@
     }
 
     // ============================================================
-    // 20. 刷新
+    // 21. 刷新
     // ============================================================
 
     function refreshAll() {
@@ -2318,7 +2257,7 @@
     }
 
     // ============================================================
-    // 21. 渲染玩家列表
+    // 22. 渲染玩家列表
     // ============================================================
 
     function renderPlayerList(players, settingsOverride) {
@@ -2333,7 +2272,6 @@
         const fontSize = Number(activeSettings.baseFontSize) || 11;
         const deathOpacity = Number(activeSettings.deathOpacity) || 0.5;
         const opMode = activeSettings.operationMode || 'quick';
-        // 如果容器高度为 0，使用固定行高作为兜底（防止首次渲染行高为 0）
         const containerHeight = container.clientHeight || 300;
         const lineHeight = calcLineHeight(players.length, fontSize, containerHeight);
 
@@ -2770,7 +2708,7 @@
     }
 
     // ============================================================
-    // 22. 模式2：右键菜单
+    // 23. 模式2：右键菜单
     // ============================================================
 
     function showMode2ContextMenu(x, y, targetId, targetName) {
@@ -3063,7 +3001,7 @@
     }
 
     // ============================================================
-    // 23. 初始化
+    // 24. 初始化
     // ============================================================
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
