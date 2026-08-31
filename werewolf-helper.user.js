@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.4
+// @version      0.1.5
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -385,6 +385,19 @@
         const players = [];
         const seen = new Set();
 
+        // ★ 第一步：从日志中提取死亡玩家名字 ★
+        const deadNamesFromLog = new Set();
+        const logEntries = document.querySelectorAll('.sc-fYxtnH, .log-entry, [class*="log"]');
+        for (const entry of logEntries) {
+            const text = entry.textContent || '';
+            // 匹配 "XXX 被处刑了。" 或 "XXX 不成样子的尸体被发现了。"
+            const match = text.match(/^([^\s]+)\s+(?:被处刑了|不成样子的尸体被发现了)/);
+            if (match) {
+                deadNamesFromLog.add(match[1]);
+            }
+        }
+
+        // ★ 第二步：从死亡图标提取死亡ID ★
         const deadIds = new Set();
         const deathImgs = document.querySelectorAll('img[alt="死亡"]');
         for (const img of deathImgs) {
@@ -416,6 +429,7 @@
             }
         }
 
+        // ★ 第三步：遍历所有玩家链接 ★
         const links = document.querySelectorAll('a[href^="/user/"]');
         for (const link of links) {
             const href = link.getAttribute('href');
@@ -425,7 +439,8 @@
             if (!name || name.includes('游戏管理员') || name === '游戏管理员') continue;
             seen.add(id);
 
-            const isDead = deadIds.has(id) || name === '替身君';
+            // ★ 综合判断死亡：死亡图标 OR 日志记录 OR 替身君 ★
+            const isDead = deadIds.has(id) || deadNamesFromLog.has(name) || name === '替身君';
             players.push({ id, name, isDead });
         }
 
@@ -560,6 +575,9 @@
     let previewWindow = null;
     let previewBlocks = [];
     const LONG_PRESS_DELAY = 800;
+    let resizeObserver = null;
+    let initialRenderDone = false;
+    let renderTimeout = null;
 
     // ============================================================
     // 7. Toast
@@ -1213,7 +1231,7 @@
     }
 
     // ============================================================
-    // 12. 灰区计算（修正：占卜师所有目标都死亡时也记录）
+    // 12. 灰区计算
     // ============================================================
 
     function calculateGrayZones() {
@@ -1510,34 +1528,12 @@
     }
 
     // ============================================================
-    // 14. 放大镜映射表构建
-    // ============================================================
-
-    function buildSearchIconMap() {
-        searchIconMap.clear();
-        const icons = document.querySelectorAll('svg.fa-search, svg[class*="fa-search"]');
-        for (const icon of icons) {
-            const playerContainer = icon.closest('.sc-jtRfpW');
-            if (!playerContainer) continue;
-            const nameLink = playerContainer.querySelector('a[href^="/user/"]');
-            if (!nameLink) continue;
-            const href = nameLink.getAttribute('href');
-            const id = href.replace(/.*\/user\//, '').split('?')[0];
-            if (id) {
-                searchIconMap.set(id, icon);
-            }
-        }
-        return searchIconMap;
-    }
-
-    // ============================================================
-    // 15. 触发玩家高亮（修正：点击父级 span，实时查找）
+    // 14. 触发玩家高亮
     // ============================================================
 
     function triggerPlayerHighlight(playerId) {
         if (!playerId) return false;
 
-        // ★ 每次实时查找，不依赖缓存的引用 ★
         const link = document.querySelector(`a[href="/user/${CSS.escape(playerId)}"]`);
         if (!link) {
             showToast(`未找到玩家「${playerId}」`, 1500);
@@ -1557,7 +1553,6 @@
         }
 
         try {
-            // ★ 关键修正：点击 SVG 最近的父级 span（事件绑定在 span 上） ★
             const clickTarget = icon.closest('span');
             if (clickTarget) {
                 clickTarget.click();
@@ -1566,7 +1561,6 @@
                 showToast(`🔍 已高亮「${displayName}」的发言`, 1000);
                 return true;
             } else {
-                // 兜底：直接点击 icon
                 icon.click();
                 showToast(`🔍 已高亮「${playerId}」的发言`, 1000);
                 return true;
@@ -1579,7 +1573,7 @@
     }
 
     // ============================================================
-    // 16. 预览窗口
+    // 15. 预览窗口
     // ============================================================
 
     function createPreviewWindow() {
@@ -1868,7 +1862,7 @@
     }
 
     // ============================================================
-    // 17. UI 创建
+    // 16. UI 创建
     // ============================================================
 
     function createSidebar() {
@@ -1914,7 +1908,7 @@
         playerList.style.cssText = `
             flex:1;overflow-y:auto;min-height:30px;max-height:calc(100vh - 160px);
         `;
-        playerList.innerHTML = '<div style="color:#666;text-align:center;padding:10px;font-size:10px;">点击「读取」刷新</div>';
+        playerList.innerHTML = '<div style="color:#666;text-align:center;padding:10px;font-size:10px;">加载中...</div>';
 
         const toolbar = document.createElement('div');
         toolbar.id = 'werewolf-toolbar';
@@ -1985,6 +1979,15 @@
             renderPlayerList([]);
             showToast('已重置', 1500);
             closePreviewWindow();
+            // 重置后重新触发首次渲染流程
+            initialRenderDone = false;
+            if (resizeObserver) {
+                resizeObserver.disconnect();
+                resizeObserver = null;
+            }
+            if (playerList) {
+                setupResizeObserver(playerList);
+            }
         });
 
         const settingsBtn = document.createElement('button');
@@ -2045,13 +2048,73 @@
             }
         }
 
-        setTimeout(() => {
-            refreshAll();
-        }, 500);
+        // ★ 使用 ResizeObserver 监听容器获得实际高度 ★
+        setupResizeObserver(playerList);
     }
 
     // ============================================================
-    // 18. 导出右键菜单
+    // 16.1 ResizeObserver 设置
+    // ============================================================
+
+    function setupResizeObserver(playerList) {
+        if (resizeObserver) {
+            resizeObserver.disconnect();
+            resizeObserver = null;
+        }
+
+        initialRenderDone = false;
+        if (renderTimeout) {
+            clearTimeout(renderTimeout);
+            renderTimeout = null;
+        }
+
+        resizeObserver = new ResizeObserver((entries) => {
+            if (initialRenderDone) return;
+
+            for (const entry of entries) {
+                const height = entry.contentRect.height;
+                // 容器获得实际高度（> 10）时触发首次渲染
+                if (height > 10) {
+                    if (renderTimeout) {
+                        clearTimeout(renderTimeout);
+                    }
+                    renderTimeout = setTimeout(() => {
+                        if (!initialRenderDone) {
+                            refreshAll();
+                            initialRenderDone = true;
+                            renderTimeout = null;
+                            if (resizeObserver) {
+                                resizeObserver.disconnect();
+                                resizeObserver = null;
+                            }
+                        }
+                    }, 100);
+                    break;
+                }
+            }
+        });
+
+        resizeObserver.observe(playerList);
+
+        // ★ 兜底：5秒后如果还没有渲染，强制渲染一次 ★
+        setTimeout(() => {
+            if (!initialRenderDone) {
+                refreshAll();
+                initialRenderDone = true;
+                if (resizeObserver) {
+                    resizeObserver.disconnect();
+                    resizeObserver = null;
+                }
+                if (renderTimeout) {
+                    clearTimeout(renderTimeout);
+                    renderTimeout = null;
+                }
+            }
+        }, 5000);
+    }
+
+    // ============================================================
+    // 17. 导出右键菜单
     // ============================================================
 
     function showExportContextMenu(x, y) {
@@ -2131,7 +2194,7 @@
     }
 
     // ============================================================
-    // 19. 收起/展开
+    // 18. 收起/展开
     // ============================================================
 
     function toggleSidebar() {
@@ -2191,11 +2254,21 @@
             if (ind) ind.style.display = 'inline';
             if (cb) cb.style.display = 'block';
             if (expandBtn) expandBtn.style.display = 'none';
+
+            // ★ 展开后重新触发首次渲染流程 ★
+            if (cachedPlayers.length > 0) {
+                renderPlayerList(cachedPlayers);
+            } else {
+                initialRenderDone = false;
+                if (list) {
+                    setupResizeObserver(list);
+                }
+            }
         }
     }
 
     // ============================================================
-    // 20. 更新指示器
+    // 19. 更新指示器
     // ============================================================
 
     function updateIndicator() {
@@ -2219,7 +2292,7 @@
     }
 
     // ============================================================
-    // 21. 刷新
+    // 20. 刷新
     // ============================================================
 
     function refreshAll() {
@@ -2245,7 +2318,7 @@
     }
 
     // ============================================================
-    // 22. 渲染玩家列表
+    // 21. 渲染玩家列表
     // ============================================================
 
     function renderPlayerList(players, settingsOverride) {
@@ -2260,6 +2333,7 @@
         const fontSize = Number(activeSettings.baseFontSize) || 11;
         const deathOpacity = Number(activeSettings.deathOpacity) || 0.5;
         const opMode = activeSettings.operationMode || 'quick';
+        // 如果容器高度为 0，使用固定行高作为兜底（防止首次渲染行高为 0）
         const containerHeight = container.clientHeight || 300;
         const lineHeight = calcLineHeight(players.length, fontSize, containerHeight);
 
@@ -2440,9 +2514,11 @@
             item.appendChild(leftMark);
 
             const nameSpan = document.createElement('span');
+            // 死亡玩家使用灰色，不覆盖职业颜色
+            const finalColor = player.isDead ? '#555555' : color;
             nameSpan.style.cssText = `
                 flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-                color:${color};font-size:${fontSize}px;line-height:${lineHeight}px;
+                color:${finalColor};font-size:${fontSize}px;line-height:${lineHeight}px;
                 font-weight:${identity ? 'bold' : 'normal'};
             `;
             nameSpan.textContent = player.name;
@@ -2503,18 +2579,13 @@
                 isLongPress = false;
             };
 
-            // ============================================================
-            // ★ 核心修改：两种模式的左键都统一为高亮 ★
-            // ============================================================
             if (opMode === 'menu') {
-                // 菜单模式：左键点击触发高亮
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const id = item.dataset.playerId;
                     triggerPlayerHighlight(id);
                 });
 
-                // 右键弹出操作菜单
                 item.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -2523,7 +2594,6 @@
                     showMode2ContextMenu(e.clientX, e.clientY, targetId, targetName);
                 });
 
-                // 菜单模式下滚轮不执行任何操作
                 item.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -2531,10 +2601,8 @@
                 });
 
             } else {
-                // 快速模式：左键点击改为触发高亮
                 const onMouseDown = (e) => {
                     const btn = e.button;
-                    // 只有右键需要长按处理（清空身份+撤回）
                     if (btn === 2) {
                         isLongPress = false;
                         clearLongPress();
@@ -2577,7 +2645,6 @@
                     }
                 };
 
-                // ★ 左键点击改为高亮，不再切换职业 ★
                 item.addEventListener('click', (e) => {
                     if (isLongPress) {
                         e.stopPropagation();
@@ -2588,7 +2655,6 @@
                     triggerPlayerHighlight(id);
                 });
 
-                // ★ 滚轮功能保持不变：循环切换占卜记录 ★
                 item.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -2634,7 +2700,6 @@
                     renderPlayerList(cachedPlayers);
                 }, { passive: false });
 
-                // ★ 右键功能保持不变：切换视角 ★
                 item.addEventListener('contextmenu', (e) => {
                     if (isLongPress) {
                         e.preventDefault();
@@ -2661,7 +2726,6 @@
                     renderPlayerList(cachedPlayers);
                 });
 
-                // ★ 中键功能保持不变：清空行动记录 ★
                 item.addEventListener('auxclick', (e) => {
                     if (e.button !== 1) return;
                     e.preventDefault();
@@ -2706,7 +2770,7 @@
     }
 
     // ============================================================
-    // 23. 模式2：右键菜单
+    // 22. 模式2：右键菜单
     // ============================================================
 
     function showMode2ContextMenu(x, y, targetId, targetName) {
@@ -2999,7 +3063,7 @@
     }
 
     // ============================================================
-    // 24. 初始化
+    // 23. 初始化
     // ============================================================
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
