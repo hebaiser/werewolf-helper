@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.6
+// @version      0.1.7
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -387,10 +387,10 @@
 
         // ★ 第一步：从日志中提取死亡玩家名字（匹配所有死因格式） ★
         const deadNamesFromLog = new Set();
-        const logEntries = document.querySelectorAll('.sc-fYxtnH, .log-entry, [class*="log"]');
+        const logEntries = document.querySelectorAll('.jf-log, .sc-feJyhm, [class*="log"]');
         for (const entry of logEntries) {
             const text = entry.textContent || '';
-            // 匹配月下人狼所有死亡消息格式（根据官方死因一览）
+            // 匹配月下人狼所有死亡消息格式
             const match = text.match(/([^\s]+)\s+(?:不成样子的尸体被发现了|被咒杀了|被处刑了|离开了村子|的尸体被发现了|追随着某个人自尽了|衰老而死了|被猎枪射杀了|被GM处死了|因为没有及时投票猝死了|因为没有及时使用夜间技能猝死了)/);
             if (match) {
                 deadNamesFromLog.add(match[1]);
@@ -454,7 +454,7 @@
     function extractJobList() {
         const order = [];
         const skip = ['昼', '夜', '犹豫', '投票', '时间', '阶段', '规则', '说明'];
-        const logs = document.querySelectorAll('.sc-fYxtnH, .log-entry, [class*="log"]');
+        const logs = document.querySelectorAll('.jf-log, .sc-feJyhm, [class*="log"]');
         for (const entry of logs) {
             const text = entry.textContent || '';
             if (!text.includes('配置:')) continue;
@@ -1525,46 +1525,98 @@
     }
 
     // ============================================================
-    // 14. 触发玩家高亮
+    // 14. 触发玩家高亮（修复版 - 完全不依赖类名）
     // ============================================================
 
     function triggerPlayerHighlight(playerId) {
         if (!playerId) return false;
 
+        // 1. 通过玩家链接定位（唯一稳定的标识）
         const link = document.querySelector(`a[href="/user/${CSS.escape(playerId)}"]`);
         if (!link) {
             showToast(`未找到玩家「${playerId}」`, 1500);
             return false;
         }
 
-        const container = link.closest('.sc-jtRfpW');
-        if (!container) {
-            showToast(`未找到玩家「${playerId}」的容器`, 1500);
-            return false;
+        // 2. 从链接向上遍历，找包含 fa-search 图标的容器
+        let container = link.parentElement;
+        let maxDepth = 10;
+        let foundIcon = null;
+
+        while (container && container !== document.body && maxDepth > 0) {
+            // 在当前容器内查找搜索图标
+            const icon = container.querySelector('svg[class*="fa-search"]');
+            if (icon) {
+                foundIcon = icon;
+                break;
+            }
+            container = container.parentElement;
+            maxDepth--;
         }
 
-        const icon = container.querySelector('svg.fa-search, svg[class*="fa-search"]');
-        if (!icon) {
+        if (!foundIcon) {
             showToast(`未找到「${playerId}」的发言高亮按钮`, 1500);
             return false;
         }
 
-        try {
-            const clickTarget = icon.closest('span');
-            if (clickTarget) {
-                clickTarget.click();
-                const player = cachedPlayers.find(p => p.id === playerId);
-                const displayName = player ? player.name : playerId;
-                showToast(`🔍 已高亮「${displayName}」的发言`, 1000);
-                return true;
-            } else {
-                icon.click();
-                showToast(`🔍 已高亮「${playerId}」的发言`, 1000);
-                return true;
+        // 3. 找可点击的父元素（向上查找可交互元素）
+        let clickTarget = foundIcon;
+        let el = foundIcon.parentElement;
+        let depth = 5;
+
+        while (el && el !== document.body && depth > 0) {
+            // 检查是否是可点击元素
+            if (el.hasAttribute('onclick') ||
+                el.getAttribute('role') === 'button' ||
+                el.tagName === 'BUTTON' ||
+                el.style.cursor === 'pointer' ||
+                el.getAttribute('data-clickable') !== null ||
+                el.closest('button') !== null) {
+                clickTarget = el;
+                break;
             }
+            // 检查父元素是否是 button 或可点击的 span
+            const parentButton = el.closest('button, span[role="button"]');
+            if (parentButton) {
+                clickTarget = parentButton;
+                break;
+            }
+            el = el.parentElement;
+            depth--;
+        }
+
+        // 如果还是找不到合适的点击目标，尝试点击图标本身或其父级 span
+        if (clickTarget === foundIcon) {
+            // 尝试找父级 span（通常包裹图标的 span 是可点击的）
+            const parentSpan = foundIcon.closest('span');
+            if (parentSpan && parentSpan !== foundIcon.parentElement) {
+                clickTarget = parentSpan;
+            }
+        }
+
+        try {
+            // 触发点击
+            clickTarget.click();
+
+            // 验证是否成功（可选：检查是否有高亮效果）
+            const player = cachedPlayers.find(p => p.id === playerId);
+            showToast(`🔍 已高亮「${player ? player.name : playerId}」的发言`, 1000);
+            return true;
         } catch (e) {
             console.warn('触发高亮失败:', e);
-            showToast(`高亮失败，请尝试手动点击发言旁的🔍图标`, 1500);
+
+            // 尝试备用方法：直接触发图标父级的点击
+            try {
+                if (foundIcon.parentElement) {
+                    foundIcon.parentElement.click();
+                    showToast(`🔍 已高亮「${playerId}」`, 1000);
+                    return true;
+                }
+            } catch (e2) {
+                // 忽略
+            }
+
+            showToast(`高亮失败，请手动点击发言旁的🔍图标`, 1500);
             return false;
         }
     }
@@ -2431,7 +2483,6 @@
             item.appendChild(leftMark);
 
             const nameSpan = document.createElement('span');
-            // 死亡玩家使用灰色，不覆盖职业颜色
             const finalColor = player.isDead ? '#555555' : color;
             nameSpan.style.cssText = `
                 flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
