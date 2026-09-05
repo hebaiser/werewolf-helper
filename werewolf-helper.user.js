@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.8
+// @version      0.1.9
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -804,6 +804,14 @@
             if (confirm('确定要清除当前房间的所有数据吗？此操作不可撤销！')) {
                 store.clearRoomData();
                 renderPlayerList(cachedPlayers);
+                // 清空数据后刷新预览
+                if (settings.showPreview) {
+                    try {
+                        if (document.getElementById('werewolf-preview-container')) {
+                            updatePreviewWindow({ preserveEdits: false });
+                        }
+                    } catch(e) {}
+                }
                 closeSettings();
             }
         });
@@ -2022,6 +2030,7 @@
         resetBtn.textContent = '重置';
         resetBtn.style.cssText = btnStyle + 'background:#3a2a3a;border-color:#6a4a4a;';
         resetBtn.addEventListener('click', () => {
+            // 第一阶段：清空数据
             store.clearAll();
             currentPerspective = null;
             cachedJobList = [];
@@ -2029,7 +2038,29 @@
             updateIndicator();
             renderPlayerList([]);
             showToast('已重置', 1500);
-            closePreviewWindow();
+
+            // 第二阶段：恢复预览（如果启用）
+            if (settings.showPreview) {
+                try {
+                    // 如果预览窗口不存在或已被移除，重新创建
+                    if (!document.getElementById('werewolf-preview-container')) {
+                        createPreviewWindow();
+                    } else {
+                        // 如果存在但被隐藏，显示它
+                        const container = document.getElementById('werewolf-preview-container');
+                        if (container.style.display === 'none') {
+                            container.style.display = 'flex';
+                        }
+                        // 刷新内容为空数据
+                        updatePreviewWindow({ preserveEdits: false });
+                    }
+                } catch(e) {
+                    console.warn('重置预览失败:', e);
+                }
+            } else {
+                // 如果预览未启用，确保它关闭
+                closePreviewWindow();
+            }
         });
 
         const settingsBtn = document.createElement('button');
@@ -2294,7 +2325,7 @@
     }
 
     // ============================================================
-    // 21. 渲染玩家列表（核心修改）
+    // 21. 渲染玩家列表
     // ============================================================
 
     function renderPlayerList(players, settingsOverride) {
@@ -2374,7 +2405,7 @@
                 }
             }
         } else if (currentPerspective === null) {
-            // 快速模式-全局视角：改为收集所有视角的标记（与菜单模式一致）
+            // 快速模式-全局视角：收集所有视角的标记（与菜单模式一致）
             for (const perspective in data.action) {
                 const actionData = data.action[perspective];
                 if (!actionData) continue;
