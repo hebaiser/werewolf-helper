@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.7
+// @version      0.1.8
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -544,7 +544,7 @@
     }
 
     function getNextResult(current, direction) {
-        const list = ['×（处刑）', '×（袭击）', null];
+        const list = ['×（处刑）', '×（夜死）', null];
         if (current === undefined || current === null) {
             return direction > 0 ? list[0] : list[list.length - 2];
         }
@@ -1635,9 +1635,9 @@
         const opacity = s.previewOpacity || 0.9;
         const size = s.previewSize || 'medium';
         const sizeMap = {
-            small: { width: '500px', height: '200px' },
-            medium: { width: '700px', height: '300px' },
-            large: { width: '900px', height: '400px' }
+            small: { width: '300px', height: '200px' },
+            medium: { width: '450px', height: '300px' },
+            large: { width: '600px', height: '400px' }
         };
         const dims = sizeMap[size] || sizeMap.medium;
         const pos = s.previewPosition || { x: null, y: null };
@@ -1723,6 +1723,7 @@
             const s = getSettings();
             s.showPreview = false;
             saveSettings(s);
+            settings = getSettings();
         });
 
         document.getElementById('preview-copy-btn').addEventListener('click', () => {
@@ -1773,6 +1774,7 @@
                 const s = getSettings();
                 s.previewPosition = { x: rect.left, y: rect.top };
                 saveSettings(s);
+                settings = getSettings();
             }
         };
 
@@ -2090,6 +2092,10 @@
 
         setTimeout(() => {
             refreshAll();
+            // 初始化预览窗口（如果设置中已启用）
+            if (settings.showPreview) {
+                try { createPreviewWindow(); } catch(e) {}
+            }
         }, 500);
     }
 
@@ -2288,7 +2294,7 @@
     }
 
     // ============================================================
-    // 21. 渲染玩家列表
+    // 21. 渲染玩家列表（核心修改）
     // ============================================================
 
     function renderPlayerList(players, settingsOverride) {
@@ -2316,8 +2322,11 @@
         const MARK_COLOR = themeColors.mark || '#ffaa66';
         const VIEW_COLOR = themeColors.view || '#66ddff';
 
+        // --- 构建标记映射 ---
         let targetMarkMap = {};
+
         if (opMode === 'menu') {
+            // 菜单模式：收集所有来源的标记
             for (const operatorId in data.action) {
                 const actionData = data.action[operatorId];
                 if (!actionData) continue;
@@ -2365,14 +2374,55 @@
                 }
             }
         } else if (currentPerspective === null) {
+            // 快速模式-全局视角：改为收集所有视角的标记（与菜单模式一致）
             for (const perspective in data.action) {
                 const actionData = data.action[perspective];
-                if (!actionData || !actionData.targets) continue;
-                for (const entry of actionData.targets) {
-                    targetMarkMap[entry.target] = entry.symbol;
+                if (!actionData) continue;
+
+                if (actionData.targets) {
+                    for (const entry of actionData.targets) {
+                        if (!targetMarkMap[entry.target]) {
+                            targetMarkMap[entry.target] = [];
+                        }
+                        const existing = targetMarkMap[entry.target].find(
+                            m => m.operator === perspective && !m.isDeath
+                        );
+                        if (existing) {
+                            existing.symbol = entry.symbol;
+                        } else {
+                            targetMarkMap[entry.target].push({
+                                operator: perspective,
+                                symbol: entry.symbol,
+                                isDeath: false
+                            });
+                        }
+                    }
+                }
+
+                if (actionData.death) {
+                    const opPlayer = cachedPlayers.find(p => p.id === perspective);
+                    if (opPlayer) {
+                        const targetName = opPlayer.name;
+                        if (!targetMarkMap[targetName]) {
+                            targetMarkMap[targetName] = [];
+                        }
+                        const existing = targetMarkMap[targetName].find(
+                            m => m.operator === perspective && m.isDeath
+                        );
+                        if (existing) {
+                            existing.symbol = actionData.death;
+                        } else {
+                            targetMarkMap[targetName].push({
+                                operator: perspective,
+                                symbol: actionData.death,
+                                isDeath: true
+                            });
+                        }
+                    }
                 }
             }
         } else {
+            // 快速模式-玩家视角：只收集当前视角的标记
             const actionData = data.action[currentPerspective];
             if (actionData) {
                 if (actionData.targets) {
@@ -2413,6 +2463,13 @@
             let markCount = null;
 
             if (opModeMenu) {
+                // 菜单模式：显示所有来源的符号组合
+                const marks = targetMarkMap[player.name] || [];
+                if (marks.length > 0) {
+                    markSymbol = marks.map(m => m.symbol).join('');
+                }
+            } else if (currentPerspective === null) {
+                // 快速模式-全局视角：显示所有来源的符号组合（与菜单模式一致）
                 const marks = targetMarkMap[player.name] || [];
                 if (marks.length > 0) {
                     markSymbol = marks.map(m => m.symbol).join('');
@@ -2457,20 +2514,23 @@
 
             let leftText = '';
             if (opModeMenu) {
+                // 菜单模式：左侧显示所有来源的符号组合
                 if (markSymbol) {
                     leftText = markSymbol;
                 } else if (!identity) {
                     leftText = '';
                 }
             } else if (currentPerspective === null) {
-                if (!identity && markSymbol) {
-                    leftText = '○';
-                } else {
+                // 快速模式-全局视角：显示所有来源的符号组合（与菜单模式一致）
+                if (markSymbol) {
+                    leftText = markSymbol;
+                } else if (!identity) {
                     leftText = '';
                 }
             } else {
+                // 快速模式-玩家视角
                 if (markSymbol) {
-                    if (markCount !== null && markSymbol !== '×（处刑）' && markSymbol !== '×（袭击）') {
+                    if (markCount !== null && markSymbol !== '×（处刑）' && markSymbol !== '×（夜死）') {
                         leftText = markSymbol + markCount;
                     } else {
                         leftText = markSymbol;
@@ -2492,39 +2552,27 @@
             nameSpan.textContent = player.name;
             item.appendChild(nameSpan);
 
+            // 右侧显示身份名或标记
             if (identity) {
                 const s = document.createElement('span');
                 s.style.cssText = `font-size:${Math.max(fontSize - 2, 7)}px;color:${color};flex-shrink:0;font-weight:bold;line-height:${lineHeight}px;`;
                 s.textContent = identity;
                 item.appendChild(s);
             } else if (opModeMenu) {
-                if (markSymbol) {
-                    const s = document.createElement('span');
-                    s.style.cssText = `
-                        font-size:${fontSize}px;flex-shrink:0;font-weight:900;
-                        color:${MARK_COLOR};line-height:${lineHeight}px;
-                        font-family:'Arial','Segoe UI Symbol',sans-serif;
-                    `;
-                    s.textContent = markSymbol;
-                    item.appendChild(s);
-                }
-            } else if (currentPerspective === null && markSymbol) {
-                const s = document.createElement('span');
-                s.style.cssText = `
-                    font-size:${fontSize}px;flex-shrink:0;font-weight:900;
-                    color:${MARK_COLOR};line-height:${lineHeight}px;
-                    font-family:'Arial','Segoe UI Symbol',sans-serif;
-                `;
-                s.textContent = '○';
-                item.appendChild(s);
+                // 菜单模式：无身份时右侧不重复显示标记（左侧已显示）
+                // 无额外操作
+            } else if (currentPerspective === null) {
+                // 快速模式-全局视角：无身份时右侧不重复显示标记（左侧已显示）
+                // 无额外操作
             } else if (currentPerspective !== null && markSymbol && !identity) {
+                // 快速模式-玩家视角：右侧显示标记
                 const s = document.createElement('span');
                 s.style.cssText = `
                     font-size:${fontSize}px;flex-shrink:0;font-weight:900;
                     color:${MARK_COLOR};line-height:${lineHeight}px;
                     font-family:'Arial','Segoe UI Symbol',sans-serif;
                 `;
-                if (markCount !== null && markSymbol !== '×（处刑）' && markSymbol !== '×（袭击）') {
+                if (markCount !== null && markSymbol !== '×（处刑）' && markSymbol !== '×（夜死）') {
                     s.textContent = markSymbol + markCount;
                 } else {
                     s.textContent = markSymbol;
@@ -2967,10 +3015,10 @@
                     renderPlayerList(cachedPlayers);
                     showToast(`${targetName} 标记为处刑`, 800);
                 }},
-                { label: '×（袭击）', onClick: () => {
-                    store.setAction(targetId, '自己', '×（袭击）');
+                { label: '×（夜死）', onClick: () => {
+                    store.setAction(targetId, '自己', '×（夜死）');
                     renderPlayerList(cachedPlayers);
-                    showToast(`${targetName} 标记为袭击`, 800);
+                    showToast(`${targetName} 标记为夜死`, 800);
                 }},
                 { label: '清除', onClick: () => {
                     store.setAction(targetId, '自己', null);
