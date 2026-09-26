@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.1.9
+// @version      0.2.0
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -385,10 +385,14 @@
         const players = [];
         const seen = new Set();
 
-        // ★ 第一步：从日志中提取死亡玩家名字（匹配所有死因格式） ★
+        // ★ 第一步：从日志中提取死亡玩家名字（只扫描系统消息，排除玩家聊天） ★
         const deadNamesFromLog = new Set();
         const logEntries = document.querySelectorAll('.jf-log, .sc-feJyhm, [class*="log"]');
         for (const entry of logEntries) {
+            // 排除玩家发言：有真实 data-userid（非 -1）的都是玩家消息，直接跳过
+            const uid = entry.getAttribute('data-userid');
+            if (uid !== null && uid !== '-1') continue;
+
             const text = entry.textContent || '';
             // 匹配月下人狼所有死亡消息格式
             const match = text.match(/([^\s]+)\s+(?:不成样子的尸体被发现了|被咒杀了|被处刑了|离开了村子|的尸体被发现了|追随着某个人自尽了|衰老而死了|被猎枪射杀了|被GM处死了|因为没有及时投票猝死了|因为没有及时使用夜间技能猝死了)/);
@@ -440,7 +444,7 @@
             seen.add(id);
 
             // ★ 综合判断死亡：死亡图标 OR 日志记录 OR 替身君 ★
-            const isDead = deadIds.has(id) || deadNamesFromLog.has(name) || name === '替身君';
+            const isDead = deadIds.has(id) || deadNamesFromLog.has(name);
             players.push({ id, name, isDead });
         }
 
