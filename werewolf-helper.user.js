@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         月下人狼 普村狼助理
 // @namespace    https://github.com/hebaiser/werewolf-helper
-// @version      0.2.0
+// @version      0.2.1
 // @description  玩家侧边栏：身份轮换/视角切换/占卜记录/灰区标记/导出表格/设置面板
 // @author       hbser
 // @match        https://www.werewolf.com.cn/room/*
@@ -364,8 +364,8 @@
     function getJobColor(job, settings) {
         if (!job) return '#888';
         const theme = settings.theme === 'system'
-            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-            : settings.theme;
+        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : settings.theme;
         if (settings.jobColorPreset === 'custom') {
             const userColors = settings.jobColors || {};
             if (userColors[job]) return userColors[job];
@@ -1413,7 +1413,7 @@
                         blocks.push({
                             id: 'block_gray_' + counter++,
                             type: 'gray',
-                            content: '灰区：' + grayList.join('，'),
+                            content: '灰区（' + grayList.length + '）：' + grayList.join('，'),
                             editable: false
                         });
                         blocks.push({
@@ -1438,7 +1438,7 @@
             blocks.push({
                 id: 'block_job_' + counter++,
                 type: 'job',
-                content: '共灰：',
+                content: '共灰（' + grayZones.commonGray.length + '）：',
                 editable: false
             });
             blocks.push({
@@ -2134,18 +2134,18 @@
         }, 500);
     }
 
-    // ============================================================
-    // 17. 导出右键菜单
-    // ============================================================
+// ============================================================
+// 17. 导出右键菜单
+// ============================================================
 
-    function showExportContextMenu(x, y) {
-        const existing = document.getElementById('export-context-menu');
-        if (existing) existing.remove();
+function showExportContextMenu(x, y) {
+    const existing = document.getElementById('export-context-menu');
+    if (existing) existing.remove();
 
-        const s = getSettings();
-        const menu = document.createElement('div');
-        menu.id = 'export-context-menu';
-        menu.style.cssText = `
+    const s = getSettings();
+    const menu = document.createElement('div');
+    menu.id = 'export-context-menu';
+    menu.style.cssText = `
             position: fixed;
             left: ${x}px;
             top: ${y}px;
@@ -2214,319 +2214,319 @@
         }, 10);
     }
 
-    // ============================================================
-    // 18. 收起/展开
-    // ============================================================
+// ============================================================
+// 18. 收起/展开
+// ============================================================
 
-    function toggleSidebar() {
-        const s = document.getElementById('werewolf-sidebar');
-        const list = document.getElementById('werewolf-player-list');
-        const tb = document.getElementById('werewolf-toolbar');
-        const cb = document.getElementById('werewolf-collapse-btn');
-        const tt = document.getElementById('werewolf-title-text');
-        const ind = document.getElementById('perspective-indicator');
-        if (!s) return;
-        isCollapsed = !isCollapsed;
-        settings.collapsed = isCollapsed;
-        saveSettings(settings);
+function toggleSidebar() {
+    const s = document.getElementById('werewolf-sidebar');
+    const list = document.getElementById('werewolf-player-list');
+    const tb = document.getElementById('werewolf-toolbar');
+    const cb = document.getElementById('werewolf-collapse-btn');
+    const tt = document.getElementById('werewolf-title-text');
+    const ind = document.getElementById('perspective-indicator');
+    if (!s) return;
+    isCollapsed = !isCollapsed;
+    settings.collapsed = isCollapsed;
+    saveSettings(settings);
 
-        const widthMap = { small: '140px', medium: '180px', large: '220px' };
-        const themeColors = getThemeColors(settings);
+    const widthMap = { small: '140px', medium: '180px', large: '220px' };
+    const themeColors = getThemeColors(settings);
 
-        if (isCollapsed) {
-            s.style.width = '0px';
-            s.style.padding = '0px';
-            s.style.border = 'none';
-            s.style.overflow = 'hidden';
-            s.style.opacity = '0';
-            s.style.pointerEvents = 'none';
-            if (list) list.style.display = 'none';
-            if (tb) tb.style.display = 'none';
-            if (tt) tt.textContent = '';
-            if (ind) ind.style.display = 'none';
-            if (cb) cb.style.display = 'none';
-            if (expandBtn) {
-                expandBtn.style.display = 'block';
-                if (settings.position === 'right') {
-                    expandBtn.style.right = '0';
-                    expandBtn.style.left = 'auto';
-                } else {
-                    expandBtn.style.left = '0';
-                    expandBtn.style.right = 'auto';
-                }
-            }
-        } else {
-            s.style.width = widthMap[settings.width] || '180px';
-            s.style.padding = '8px 6px';
-            s.style.border = `2px solid ${themeColors.border}`;
+    if (isCollapsed) {
+        s.style.width = '0px';
+        s.style.padding = '0px';
+        s.style.border = 'none';
+        s.style.overflow = 'hidden';
+        s.style.opacity = '0';
+        s.style.pointerEvents = 'none';
+        if (list) list.style.display = 'none';
+        if (tb) tb.style.display = 'none';
+        if (tt) tt.textContent = '';
+        if (ind) ind.style.display = 'none';
+        if (cb) cb.style.display = 'none';
+        if (expandBtn) {
+            expandBtn.style.display = 'block';
             if (settings.position === 'right') {
-                s.style.borderLeft = `2px solid ${themeColors.border}`;
-                s.style.borderRight = 'none';
+                expandBtn.style.right = '0';
+                expandBtn.style.left = 'auto';
             } else {
-                s.style.borderRight = `2px solid ${themeColors.border}`;
-                s.style.borderLeft = 'none';
+                expandBtn.style.left = '0';
+                expandBtn.style.right = 'auto';
             }
-            s.style.overflow = 'hidden';
-            s.style.opacity = '1';
-            s.style.pointerEvents = 'auto';
-            if (list) list.style.display = 'block';
-            if (tb) tb.style.display = 'flex';
-            if (tt) tt.textContent = '狼';
-            if (ind) ind.style.display = 'inline';
-            if (cb) cb.style.display = 'block';
-            if (expandBtn) expandBtn.style.display = 'none';
         }
-    }
-
-    // ============================================================
-    // 19. 更新指示器
-    // ============================================================
-
-    function updateIndicator() {
-        const ind = document.getElementById('perspective-indicator');
-        if (!ind) return;
-        const themeColors = getThemeColors(settings);
-        const opMode = settings.operationMode || 'quick';
-        if (opMode === 'menu') {
-            ind.textContent = '菜单模式';
-            ind.style.color = '#66ddff';
-            return;
-        }
-        if (currentPerspective) {
-            const p = cachedPlayers.find(x => x.id === currentPerspective);
-            ind.textContent = `视角 ${p ? p.name : currentPerspective}`;
-            ind.style.color = themeColors.view || '#66ddff';
+    } else {
+        s.style.width = widthMap[settings.width] || '180px';
+        s.style.padding = '8px 6px';
+        s.style.border = `2px solid ${themeColors.border}`;
+        if (settings.position === 'right') {
+            s.style.borderLeft = `2px solid ${themeColors.border}`;
+            s.style.borderRight = 'none';
         } else {
-            ind.textContent = '全局';
-            ind.style.color = themeColors.mark || '#ffaa66';
+            s.style.borderRight = `2px solid ${themeColors.border}`;
+            s.style.borderLeft = 'none';
         }
+        s.style.overflow = 'hidden';
+        s.style.opacity = '1';
+        s.style.pointerEvents = 'auto';
+        if (list) list.style.display = 'block';
+        if (tb) tb.style.display = 'flex';
+        if (tt) tt.textContent = '狼';
+        if (ind) ind.style.display = 'inline';
+        if (cb) cb.style.display = 'block';
+        if (expandBtn) expandBtn.style.display = 'none';
+    }
+}
+
+// ============================================================
+// 19. 更新指示器
+// ============================================================
+
+function updateIndicator() {
+    const ind = document.getElementById('perspective-indicator');
+    if (!ind) return;
+    const themeColors = getThemeColors(settings);
+    const opMode = settings.operationMode || 'quick';
+    if (opMode === 'menu') {
+        ind.textContent = '菜单模式';
+        ind.style.color = '#66ddff';
+        return;
+    }
+    if (currentPerspective) {
+        const p = cachedPlayers.find(x => x.id === currentPerspective);
+        ind.textContent = `视角 ${p ? p.name : currentPerspective}`;
+        ind.style.color = themeColors.view || '#66ddff';
+    } else {
+        ind.textContent = '全局';
+        ind.style.color = themeColors.mark || '#ffaa66';
+    }
+}
+
+// ============================================================
+// 20. 刷新
+// ============================================================
+
+function refreshAll() {
+    cachedJobList = extractJobList();
+    if (cachedJobList.length > 0) {
+        store.setJobColors(generateJobColors(cachedJobList));
+    }
+    const players = findPlayers();
+    if (players.length > 0) {
+        cachedPlayers = players;
+        updateIndicator();
+        renderPlayerList(players);
+        try {
+            if (document.getElementById('werewolf-preview-container')) {
+                updatePreviewWindow({ preserveEdits: true });
+            }
+        } catch(e) {}
+    } else {
+        cachedPlayers = [];
+        const list = document.getElementById('werewolf-player-list');
+        if (list) list.innerHTML = '<div style="color:#ff8844;text-align:center;padding:10px;font-size:10px;">未找到玩家</div>';
+    }
+}
+
+// ============================================================
+// 21. 渲染玩家列表
+// ============================================================
+
+function renderPlayerList(players, settingsOverride) {
+    const container = document.getElementById('werewolf-player-list');
+    if (!container) return;
+    if (!players || players.length === 0) {
+        container.innerHTML = '<div style="color:#666;text-align:center;padding:10px;font-size:10px;">暂无玩家</div>';
+        return;
     }
 
-    // ============================================================
-    // 20. 刷新
-    // ============================================================
+    const activeSettings = settingsOverride || settings;
+    const fontSize = Number(activeSettings.baseFontSize) || 11;
+    const deathOpacity = Number(activeSettings.deathOpacity) || 0.5;
+    const opMode = activeSettings.operationMode || 'quick';
+    const containerHeight = container.clientHeight || 300;
+    const lineHeight = calcLineHeight(players.length, fontSize, containerHeight);
 
-    function refreshAll() {
-        cachedJobList = extractJobList();
-        if (cachedJobList.length > 0) {
-            store.setJobColors(generateJobColors(cachedJobList));
-        }
-        const players = findPlayers();
-        if (players.length > 0) {
-            cachedPlayers = players;
-            updateIndicator();
-            renderPlayerList(players);
-            try {
-                if (document.getElementById('werewolf-preview-container')) {
-                    updatePreviewWindow({ preserveEdits: true });
-                }
-            } catch(e) {}
-        } else {
-            cachedPlayers = [];
-            const list = document.getElementById('werewolf-player-list');
-            if (list) list.innerHTML = '<div style="color:#ff8844;text-align:center;padding:10px;font-size:10px;">未找到玩家</div>';
-        }
-    }
+    const frag = document.createDocumentFragment();
+    const data = store.get();
+    if (!data.identity) data.identity = {};
+    if (!data.action) data.action = {};
+    const theme = getCurrentTheme(activeSettings);
+    const themeColors = getThemeColors(activeSettings);
+    const dividerColor = theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+    const MARK_COLOR = themeColors.mark || '#ffaa66';
+    const VIEW_COLOR = themeColors.view || '#66ddff';
 
-    // ============================================================
-    // 21. 渲染玩家列表
-    // ============================================================
+    // --- 构建标记映射 ---
+    let targetMarkMap = {};
 
-    function renderPlayerList(players, settingsOverride) {
-        const container = document.getElementById('werewolf-player-list');
-        if (!container) return;
-        if (!players || players.length === 0) {
-            container.innerHTML = '<div style="color:#666;text-align:center;padding:10px;font-size:10px;">暂无玩家</div>';
-            return;
-        }
+    if (opMode === 'menu') {
+        // 菜单模式：收集所有来源的标记
+        for (const operatorId in data.action) {
+            const actionData = data.action[operatorId];
+            if (!actionData) continue;
 
-        const activeSettings = settingsOverride || settings;
-        const fontSize = Number(activeSettings.baseFontSize) || 11;
-        const deathOpacity = Number(activeSettings.deathOpacity) || 0.5;
-        const opMode = activeSettings.operationMode || 'quick';
-        const containerHeight = container.clientHeight || 300;
-        const lineHeight = calcLineHeight(players.length, fontSize, containerHeight);
-
-        const frag = document.createDocumentFragment();
-        const data = store.get();
-        if (!data.identity) data.identity = {};
-        if (!data.action) data.action = {};
-        const theme = getCurrentTheme(activeSettings);
-        const themeColors = getThemeColors(activeSettings);
-        const dividerColor = theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-        const MARK_COLOR = themeColors.mark || '#ffaa66';
-        const VIEW_COLOR = themeColors.view || '#66ddff';
-
-        // --- 构建标记映射 ---
-        let targetMarkMap = {};
-
-        if (opMode === 'menu') {
-            // 菜单模式：收集所有来源的标记
-            for (const operatorId in data.action) {
-                const actionData = data.action[operatorId];
-                if (!actionData) continue;
-
-                if (actionData.targets) {
-                    for (const entry of actionData.targets) {
-                        if (!targetMarkMap[entry.target]) {
-                            targetMarkMap[entry.target] = [];
-                        }
-                        const existing = targetMarkMap[entry.target].find(
-                            m => m.operator === operatorId && !m.isDeath
-                        );
-                        if (existing) {
-                            existing.symbol = entry.symbol;
-                        } else {
-                            targetMarkMap[entry.target].push({
-                                operator: operatorId,
-                                symbol: entry.symbol,
-                                isDeath: false
-                            });
-                        }
+            if (actionData.targets) {
+                for (const entry of actionData.targets) {
+                    if (!targetMarkMap[entry.target]) {
+                        targetMarkMap[entry.target] = [];
+                    }
+                    const existing = targetMarkMap[entry.target].find(
+                        m => m.operator === operatorId && !m.isDeath
+                    );
+                    if (existing) {
+                        existing.symbol = entry.symbol;
+                    } else {
+                        targetMarkMap[entry.target].push({
+                            operator: operatorId,
+                            symbol: entry.symbol,
+                            isDeath: false
+                        });
                     }
                 }
+            }
 
-                if (actionData.death) {
-                    const opPlayer = cachedPlayers.find(p => p.id === operatorId);
-                    if (opPlayer) {
-                        const targetName = opPlayer.name;
-                        if (!targetMarkMap[targetName]) {
-                            targetMarkMap[targetName] = [];
-                        }
-                        const existing = targetMarkMap[targetName].find(
-                            m => m.operator === operatorId && m.isDeath
-                        );
-                        if (existing) {
-                            existing.symbol = actionData.death;
-                        } else {
-                            targetMarkMap[targetName].push({
-                                operator: operatorId,
-                                symbol: actionData.death,
-                                isDeath: true
-                            });
-                        }
+            if (actionData.death) {
+                const opPlayer = cachedPlayers.find(p => p.id === operatorId);
+                if (opPlayer) {
+                    const targetName = opPlayer.name;
+                    if (!targetMarkMap[targetName]) {
+                        targetMarkMap[targetName] = [];
+                    }
+                    const existing = targetMarkMap[targetName].find(
+                        m => m.operator === operatorId && m.isDeath
+                    );
+                    if (existing) {
+                        existing.symbol = actionData.death;
+                    } else {
+                        targetMarkMap[targetName].push({
+                            operator: operatorId,
+                            symbol: actionData.death,
+                            isDeath: true
+                        });
                     }
                 }
+            }
+        }
+    } else if (currentPerspective === null) {
+        // 快速模式-全局视角：收集所有视角的标记（与菜单模式一致）
+        for (const perspective in data.action) {
+            const actionData = data.action[perspective];
+            if (!actionData) continue;
+
+            if (actionData.targets) {
+                for (const entry of actionData.targets) {
+                    if (!targetMarkMap[entry.target]) {
+                        targetMarkMap[entry.target] = [];
+                    }
+                    const existing = targetMarkMap[entry.target].find(
+                        m => m.operator === perspective && !m.isDeath
+                    );
+                    if (existing) {
+                        existing.symbol = entry.symbol;
+                    } else {
+                        targetMarkMap[entry.target].push({
+                            operator: perspective,
+                            symbol: entry.symbol,
+                            isDeath: false
+                        });
+                    }
+                }
+            }
+
+            if (actionData.death) {
+                const opPlayer = cachedPlayers.find(p => p.id === perspective);
+                if (opPlayer) {
+                    const targetName = opPlayer.name;
+                    if (!targetMarkMap[targetName]) {
+                        targetMarkMap[targetName] = [];
+                    }
+                    const existing = targetMarkMap[targetName].find(
+                        m => m.operator === perspective && m.isDeath
+                    );
+                    if (existing) {
+                        existing.symbol = actionData.death;
+                    } else {
+                        targetMarkMap[targetName].push({
+                            operator: perspective,
+                            symbol: actionData.death,
+                            isDeath: true
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        // 快速模式-玩家视角：只收集当前视角的标记
+        const actionData = data.action[currentPerspective];
+        if (actionData) {
+            if (actionData.targets) {
+                for (const entry of actionData.targets) {
+                    targetMarkMap[entry.target] = entry.symbol;
+                }
+            }
+            if (actionData.death) {
+                targetMarkMap['自己'] = actionData.death;
+            }
+        }
+    }
+
+    function getOperatorHistory(operatorId) {
+        const actionData = data.action[operatorId];
+        if (!actionData || !actionData.targets) return [];
+        return actionData.targets;
+    }
+
+    players.forEach((player, index) => {
+        const isSelf = (currentPerspective === player.id);
+        const opModeMenu = (opMode === 'menu');
+
+        let identity = null;
+        if (opModeMenu) {
+            identity = store.getIdentity('global', player.id);
+        } else if (currentPerspective === null) {
+            identity = store.getIdentity('global', player.id);
+        } else {
+            identity = store.getIdentity(currentPerspective, player.id);
+            if (!identity) {
+                identity = store.getIdentity('global', player.id);
+            }
+        }
+        const color = identity ? getJobColor(identity, activeSettings) : '#888';
+
+        let markSymbol = null;
+        let markCount = null;
+
+        if (opModeMenu) {
+            // 菜单模式：显示所有来源的符号组合
+            const marks = targetMarkMap[player.name] || [];
+            if (marks.length > 0) {
+                markSymbol = marks.map(m => m.symbol).join('');
             }
         } else if (currentPerspective === null) {
-            // 快速模式-全局视角：收集所有视角的标记（与菜单模式一致）
-            for (const perspective in data.action) {
-                const actionData = data.action[perspective];
-                if (!actionData) continue;
-
-                if (actionData.targets) {
-                    for (const entry of actionData.targets) {
-                        if (!targetMarkMap[entry.target]) {
-                            targetMarkMap[entry.target] = [];
-                        }
-                        const existing = targetMarkMap[entry.target].find(
-                            m => m.operator === perspective && !m.isDeath
-                        );
-                        if (existing) {
-                            existing.symbol = entry.symbol;
-                        } else {
-                            targetMarkMap[entry.target].push({
-                                operator: perspective,
-                                symbol: entry.symbol,
-                                isDeath: false
-                            });
-                        }
-                    }
-                }
-
-                if (actionData.death) {
-                    const opPlayer = cachedPlayers.find(p => p.id === perspective);
-                    if (opPlayer) {
-                        const targetName = opPlayer.name;
-                        if (!targetMarkMap[targetName]) {
-                            targetMarkMap[targetName] = [];
-                        }
-                        const existing = targetMarkMap[targetName].find(
-                            m => m.operator === perspective && m.isDeath
-                        );
-                        if (existing) {
-                            existing.symbol = actionData.death;
-                        } else {
-                            targetMarkMap[targetName].push({
-                                operator: perspective,
-                                symbol: actionData.death,
-                                isDeath: true
-                            });
-                        }
-                    }
-                }
+            // 快速模式-全局视角：显示所有来源的符号组合（与菜单模式一致）
+            const marks = targetMarkMap[player.name] || [];
+            if (marks.length > 0) {
+                markSymbol = marks.map(m => m.symbol).join('');
             }
-        } else {
-            // 快速模式-玩家视角：只收集当前视角的标记
-            const actionData = data.action[currentPerspective];
-            if (actionData) {
-                if (actionData.targets) {
-                    for (const entry of actionData.targets) {
-                        targetMarkMap[entry.target] = entry.symbol;
-                    }
-                }
-                if (actionData.death) {
-                    targetMarkMap['自己'] = actionData.death;
+        } else if (isSelf && currentPerspective !== null && targetMarkMap['自己']) {
+            markSymbol = targetMarkMap['自己'];
+        } else if (targetMarkMap[player.name]) {
+            markSymbol = targetMarkMap[player.name];
+            if (currentPerspective !== null && !opModeMenu) {
+                const history = getOperatorHistory(currentPerspective);
+                const idx = history.findIndex(e => e.target === player.name);
+                if (idx !== -1) {
+                    markCount = idx + 1;
                 }
             }
         }
 
-        function getOperatorHistory(operatorId) {
-            const actionData = data.action[operatorId];
-            if (!actionData || !actionData.targets) return [];
-            return actionData.targets;
-        }
-
-        players.forEach((player, index) => {
-            const isSelf = (currentPerspective === player.id);
-            const opModeMenu = (opMode === 'menu');
-
-            let identity = null;
-            if (opModeMenu) {
-                identity = store.getIdentity('global', player.id);
-            } else if (currentPerspective === null) {
-                identity = store.getIdentity('global', player.id);
-            } else {
-                identity = store.getIdentity(currentPerspective, player.id);
-                if (!identity) {
-                    identity = store.getIdentity('global', player.id);
-                }
-            }
-            const color = identity ? getJobColor(identity, activeSettings) : '#888';
-
-            let markSymbol = null;
-            let markCount = null;
-
-            if (opModeMenu) {
-                // 菜单模式：显示所有来源的符号组合
-                const marks = targetMarkMap[player.name] || [];
-                if (marks.length > 0) {
-                    markSymbol = marks.map(m => m.symbol).join('');
-                }
-            } else if (currentPerspective === null) {
-                // 快速模式-全局视角：显示所有来源的符号组合（与菜单模式一致）
-                const marks = targetMarkMap[player.name] || [];
-                if (marks.length > 0) {
-                    markSymbol = marks.map(m => m.symbol).join('');
-                }
-            } else if (isSelf && currentPerspective !== null && targetMarkMap['自己']) {
-                markSymbol = targetMarkMap['自己'];
-            } else if (targetMarkMap[player.name]) {
-                markSymbol = targetMarkMap[player.name];
-                if (currentPerspective !== null && !opModeMenu) {
-                    const history = getOperatorHistory(currentPerspective);
-                    const idx = history.findIndex(e => e.target === player.name);
-                    if (idx !== -1) {
-                        markCount = idx + 1;
-                    }
-                }
-            }
-
-            const item = document.createElement('div');
-            item.dataset.playerId = player.id;
-            item.dataset.playerName = player.name;
-            const isLast = index === players.length - 1;
-            item.style.cssText = `
+        const item = document.createElement('div');
+        item.dataset.playerId = player.id;
+        item.dataset.playerName = player.name;
+        const isLast = index === players.length - 1;
+        item.style.cssText = `
                 display:flex;align-items:center;padding:1px 3px;margin:0;
                 border-radius:2px;
                 background:${isSelf ? themeColors.highlight : 'transparent'};
@@ -2820,34 +2820,34 @@
         container.appendChild(frag);
     }
 
-    // ============================================================
-    // 22. 模式2：右键菜单
-    // ============================================================
+// ============================================================
+// 22. 模式2：右键菜单
+// ============================================================
 
-    function showMode2ContextMenu(x, y, targetId, targetName) {
-        const existing = document.getElementById('mode2-context-menu');
-        if (existing) existing.remove();
+function showMode2ContextMenu(x, y, targetId, targetName) {
+    const existing = document.getElementById('mode2-context-menu');
+    if (existing) existing.remove();
 
-        const targetJob = store.getIdentity('global', targetId);
-        const allPlayers = cachedPlayers;
-        const allJobs = cachedJobList;
+    const targetJob = store.getIdentity('global', targetId);
+    const allPlayers = cachedPlayers;
+    const allJobs = cachedJobList;
 
-        const itemCount = targetJob ? allPlayers.length + 3 : allJobs.length;
-        const estimatedHeight = Math.min(itemCount * 28 + 20, 400);
-        let top = y;
-        let left = x;
-        if (y + estimatedHeight > window.innerHeight - 10) {
-            top = window.innerHeight - 10 - estimatedHeight;
-            if (top < 10) top = 10;
-        }
-        if (x + 160 > window.innerWidth - 10) {
-            left = window.innerWidth - 10 - 160;
-            if (left < 10) left = 10;
-        }
+    const itemCount = targetJob ? allPlayers.length + 3 : allJobs.length;
+    const estimatedHeight = Math.min(itemCount * 28 + 20, 400);
+    let top = y;
+    let left = x;
+    if (y + estimatedHeight > window.innerHeight - 10) {
+        top = window.innerHeight - 10 - estimatedHeight;
+        if (top < 10) top = 10;
+    }
+    if (x + 160 > window.innerWidth - 10) {
+        left = window.innerWidth - 10 - 160;
+        if (left < 10) left = 10;
+    }
 
-        const menu = document.createElement('div');
-        menu.id = 'mode2-context-menu';
-        menu.style.cssText = `
+    const menu = document.createElement('div');
+    menu.id = 'mode2-context-menu';
+    menu.style.cssText = `
             position: fixed;
             left: ${left}px;
             top: ${top}px;
@@ -3113,31 +3113,31 @@
         }, 10);
     }
 
-    // ============================================================
-    // 23. 初始化
-    // ============================================================
+// ============================================================
+// 23. 初始化
+// ============================================================
 
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-        if (settings.theme === 'system') {
-            applySettingsToSidebar();
-        }
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
-            e.preventDefault();
-            openSettings();
-        }
-    });
-
-    function init() {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', createSidebar);
-        } else {
-            createSidebar();
-        }
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (settings.theme === 'system') {
+        applySettingsToSidebar();
     }
+});
 
-    init();
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+        e.preventDefault();
+        openSettings();
+    }
+});
+
+function init() {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', createSidebar);
+    } else {
+        createSidebar();
+    }
+}
+
+init();
 
 })();
